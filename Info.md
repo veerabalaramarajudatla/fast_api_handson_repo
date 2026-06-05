@@ -27,3 +27,8 @@ fastapi-project/
 uvicorn main:app --reload
 
 --- List of API ---
+-> "/" - Health Check - Working
+-> "/employee/add" - Adding Employee data - Working
+-> "/employee/getall" - Getting all Employee data - Working
+-> "/employee/drop/{id}" - Not working
+-> "/name" - Normal Name Retrival - Working
