@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from app.routers.employee import router
+from app.routers.manager import mrouter
 
 app = FastAPI()
 app.include_router(router)
+app.include_router(mrouter)
 
 @app.get("/")
 def health_check():
