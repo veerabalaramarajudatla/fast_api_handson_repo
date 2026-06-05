@@ -18,7 +18,7 @@ def manager_all():
 @mrouter.get("/manager/get/{id}")
 def manager_id(id:int):
     for m in manager:
-        if manager.id == id:
+        if m.id == id:
             return m
     
     return {
