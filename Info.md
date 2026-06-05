@@ -29,6 +29,7 @@ uvicorn main:app --reload
 --- List of API ---
 -> "/" - Health Check - Working
 -> "/employee/add" - Adding Employee data - Working
--> "/employee/getall" - Getting all Employee data - Working
--> "/employee/drop/{id}" - Not working
+-> "/employee/get/all" - Getting all Employee data - Working
+-> "/employee/get/{id}" - Getting info for that particular employee - Working
+-> "/employee/drop/{id}" - Working
 -> "/name" - Normal Name Retrival - Working
