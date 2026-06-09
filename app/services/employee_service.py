@@ -89,3 +89,12 @@ def update_employee(id: int, employee: Employee):
     return {
         "rows_updated": result.rowcount
     }
+
+def get_team_employee(team: str):
+    query = text("""
+        select * from employee where team = :team
+    """)
+    with engine.begin() as conn:
+        result = conn.execute(query,{"team":team})
+        rows = result.mappings().all()
+    return rows

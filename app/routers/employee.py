@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.schemas.employee import Employee
-from app.services.employee_service import (get_all_employees,add_employe,get_spicf_emp,del_emp, update_employee)
+from app.services.employee_service import (get_all_employees,add_employe,get_spicf_emp,del_emp, update_employee, get_team_employee)
 
 router = APIRouter(prefix="/employee",tags=["Employee"])
 
@@ -23,3 +23,7 @@ def drop_employee(id:int):
 @router.put("/employee/update/{id}")
 def update_of_employee(id:int, employee: Employee):
     return update_employee(id, employee)
+
+@router.get("/employee/get_team/{team}")
+def get_by_team(team:str):
+    return get_team_employee(team)
