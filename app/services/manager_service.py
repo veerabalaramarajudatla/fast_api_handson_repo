@@ -48,3 +48,43 @@ def del_manager(id:int):
         "message": "Employee Manager Deleted",
         "rows_affected": result.rowcount
     }
+
+def update_manager(id: int, employeemanager: Manager):
+    update_fields = []
+    params = {"id": id}
+    
+    if employeemanager.name is not None:
+        update_fields.append("name = :name")
+        params["name"] = employeemanager.name
+
+    if employeemanager.age is not None:
+        update_fields.append("age = :age")
+        params["age"] = employeemanager.age
+
+    if employeemanager.designation is not None:
+        update_fields.append("designation = :designation")
+        params["designation"] = employeemanager.designation
+
+    if employeemanager.team is not None:
+        update_fields.append("team = :team")
+        params["team"] = employeemanager.team
+
+    if not update_fields:
+        return {"message": "No fields provided"}
+
+    query = text(f"""
+        UPDATE manager
+        SET {", ".join(update_fields)}
+        WHERE id = :id
+    """)
+
+    with engine.begin() as conn:
+
+        result = conn.execute(
+            query,
+            params
+        )
+
+    return {
+        "rows_updated": result.rowcount
+    }

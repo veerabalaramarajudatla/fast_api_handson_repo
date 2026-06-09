@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.schemas.manager import Manager
-from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager)
+from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager, update_manager)
 
 mrouter = APIRouter()
 
@@ -19,3 +19,7 @@ def manager_id(id:int):
 @mrouter.delete("/manager/delete/{id}")
 def manger_del(id:int):
     return del_manager(id)
+
+@mrouter.put("/manager/update/{id}")
+def update_of_manager(id:int, employeemanager: Manager):
+    return update_manager(id, employeemanager)

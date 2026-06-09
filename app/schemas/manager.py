@@ -1,7 +1,8 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class Manager(BaseModel):
-    name: str
-    designation : str
-    team : str
-    age : int
+    name: Optional[str] = None
+    designation: Optional[str] = None
+    team: Optional[str] = None
+    age: Optional[int] = None 
