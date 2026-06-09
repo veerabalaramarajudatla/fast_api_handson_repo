@@ -4,7 +4,7 @@ from app.schemas.manager import Manager
 
 def add_manager(employeemanager: Manager):
     query = text("""
-        INSERT INTO employee(name, designation, team, age)
+        INSERT INTO manager (name, designation, team, age)
         VALUES(:name, :designation, :team, :age)
     """)
     with engine.begin() as conn:
