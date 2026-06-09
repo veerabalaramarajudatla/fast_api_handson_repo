@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.schemas.manager import Manager
-from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager, update_manager, team_of_manager)
+from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager, update_manager, team_of_manager, team)
 
 mrouter = APIRouter(prefix="/manager",tags=["Manager"])
 
@@ -27,3 +27,7 @@ def update_of_manager(id:int, employeemanager: Manager):
 @mrouter.get("/manager/team/{id}")
 def team_of_the_manager(id:int):
     return team_of_manager(id)
+
+@mrouter.get("/manager/allteam")
+def all_team():
+    return team()

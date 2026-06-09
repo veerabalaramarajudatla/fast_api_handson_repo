@@ -100,3 +100,12 @@ def team_of_manager(id: int):
         result=conn.execute(query,{"id": id})
         rows = result.mappings().all()
     return rows
+
+def team():
+    query = text("""
+        select m.id as manager_id, m.name as manager_name, e.id as employee_id, e.name as employee_name from manager m left join employee e on m.team = e.team
+    """)
+    with engine.begin() as conn:
+        result = conn.execute(query)
+        rows = result.mappings().all()
+    return rows
