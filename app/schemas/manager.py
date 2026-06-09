@@ -5,4 +5,3 @@ class Manager(BaseModel):
     designation : str
     team : str
     age : int
-    id : int

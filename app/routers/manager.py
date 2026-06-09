@@ -1,35 +1,21 @@
 from fastapi import APIRouter
 from app.schemas.manager import Manager
-from app.services.manager_service import manager
+from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager)
 
 mrouter = APIRouter()
 
 @mrouter.post("/manager/add")
 def manager_add(employeemanager : Manager):
-    manager.append(employeemanager)
-    return {
-        "Message" : "New Manager has been added"
-    }
+    return add_manager(employeemanager)
 
 @mrouter.get("/manager/get/all")
 def manager_all():
-    return manager
+    return get_manager_list()
 
 @mrouter.get("/manager/get/{id}")
-def manager_id(id:int):
-    for m in manager:
-        if m.id == id:
-            return m
-    
-    return {
-        "Message" : "Manager not found"
-    }
+def manager_id(id:int):    
+    return get_manager(id)
 
 @mrouter.delete("/manager/delete/{id}")
 def manger_del(id:int):
-    for m in manager:
-        if manager.id == id:
-            manager.remove(m)
-    return {
-        "Message" : "Manager Removed"
-    }
+    return del_manager(id)

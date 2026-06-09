@@ -9,6 +9,10 @@
 
 -> pip install sqlalchemy pymysql
 
+-> pip install pymysql
+
+-> pip install psycopg2-binary / pip install psycopg
+
 
 --- File Architecture ---
 
