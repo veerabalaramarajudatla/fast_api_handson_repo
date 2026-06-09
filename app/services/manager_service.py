@@ -88,3 +88,15 @@ def update_manager(id: int, employeemanager: Manager):
     return {
         "rows_updated": result.rowcount
     }
+
+def team_of_manager(id: int):
+    query = text("""
+        select m.id AS manager_id, m.name AS manager_name,
+            m.team, e.id AS employee_id, e.name AS employee_name,
+            e.designation from manager m left join 
+            employee e on m.team = e.team where m.id = :id
+    """)
+    with engine.begin() as conn:
+        result=conn.execute(query,{"id": id})
+        rows = result.mappings().all()
+    return rows
