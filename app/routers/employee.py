@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from app.schemas.employee import Employee
 from app.services.employee_service import (get_all_employees,add_employe,get_spicf_emp,del_emp, update_employee, get_team_employee)
 
-router = APIRouter(prefix="/employee",tags=["Employee"])
+router = APIRouter(tags=["Employee"])
 
 @router.post("/employee/add")
 def add_employee(employee: Employee):

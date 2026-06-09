@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from app.schemas.manager import Manager
 from app.services.manager_service import (add_manager, get_manager_list, get_manager, del_manager, update_manager, team_of_manager, team)
 
-mrouter = APIRouter(prefix="/manager",tags=["Manager"])
+mrouter = APIRouter(tags=["Manager"])
 
 @mrouter.post("/manager/add")
 def manager_add(employeemanager : Manager):
