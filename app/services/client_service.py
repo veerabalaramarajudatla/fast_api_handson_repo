@@ -1,9 +1,7 @@
 from app.model.client import Client
 
 def create_client(db, client):
-    new_client = Client(
-        client_name=client.client_name
-    )
+    new_client = Client(client_name=client.client_name,client_company=client.client_company)
     db.add(new_client)
     db.commit()
     db.refresh(new_client)

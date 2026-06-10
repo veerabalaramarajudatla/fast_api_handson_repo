@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.routers.client import router
+from app.routers.project import prouter
 from app.database.connection import engine
 from sqlalchemy import text
 from dotenv import load_dotenv
@@ -7,6 +8,7 @@ import os
 
 app = FastAPI()
 app.include_router(router)
+app.include_router(prouter)
 
 load_dotenv()
 
