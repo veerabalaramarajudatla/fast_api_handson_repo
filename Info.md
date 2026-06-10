@@ -13,6 +13,9 @@
 
 -> pip install psycopg2-binary / pip install psycopg
 
+-> pip install alembic
+
+-> python -m alembic init alembic
 
 --- File Architecture ---
 

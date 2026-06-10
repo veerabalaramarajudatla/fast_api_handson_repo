@@ -1,6 +1,5 @@
 from fastapi import FastAPI
-from app.routers.employee import router
-from app.routers.manager import mrouter
+from app.routers.client import router
 from app.database.connection import engine
 from sqlalchemy import text
 from dotenv import load_dotenv
@@ -8,7 +7,6 @@ import os
 
 app = FastAPI()
 app.include_router(router)
-app.include_router(mrouter)
 
 load_dotenv()
 
