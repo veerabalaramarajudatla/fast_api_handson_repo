@@ -1,0 +1,863 @@
+name: Secure Build, Approval and ECR Push
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      severity_mode:
+        description: "Select ALL severities or SELECTIVE severities"
+        required: true
+        type: choice
+        options:
+          - ALL
+          - SELECTIVE
+        default: ALL
+
+      check_critical:
+        description: "SELECTIVE mode - Check CRITICAL"
+        required: true
+        type: boolean
+        default: true
+
+      check_high:
+        description: "SELECTIVE mode - Check HIGH"
+        required: true
+        type: boolean
+        default: true
+
+      check_medium:
+        description: "SELECTIVE mode - Check MEDIUM"
+        required: true
+        type: boolean
+        default: true
+
+      check_low:
+        description: "SELECTIVE mode - Check LOW"
+        required: true
+        type: boolean
+        default: false
+
+      critical_threshold:
+        description: "Maximum allowed CRITICAL vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      high_threshold:
+        description: "Maximum allowed HIGH vulnerabilities"
+        required: true
+        type: number
+        default: 5
+
+      medium_threshold:
+        description: "Maximum allowed MEDIUM vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      low_threshold:
+        description: "Maximum allowed LOW vulnerabilities"
+        required: true
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: "570865379429"
+  ECR_REPOSITORY: achala-poc-python-app
+  AWS_ROLE_ARN: arn:aws:iam::570865379429:role/GitHub-Achala-POC-ECR-Role
+
+  # CHANGE THIS to the GitHub username/team that should approve.
+  APPROVERS: veerabalaramarajudatla
+
+jobs:
+
+  # ============================================================
+  # 1. SNYK SCAN + SECURITY EVALUATION + PDF
+  # ============================================================
+
+  security-scan:
+    name: Snyk Security Scan
+    runs-on: ubuntu-latest
+
+    outputs:
+      security_status: ${{ steps.evaluate.outputs.security_status }}
+      critical_count: ${{ steps.evaluate.outputs.critical_count }}
+      high_count: ${{ steps.evaluate.outputs.high_count }}
+      medium_count: ${{ steps.evaluate.outputs.medium_count }}
+      low_count: ${{ steps.evaluate.outputs.low_count }}
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout selected branch
+      # --------------------------------------------------------
+
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # Setup Python
+      # --------------------------------------------------------
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # --------------------------------------------------------
+      # Install PDF dependency
+      # --------------------------------------------------------
+
+      - name: Install report dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install reportlab
+
+      # --------------------------------------------------------
+      # Setup Snyk
+      # --------------------------------------------------------
+
+      - name: Setup Snyk CLI
+        uses: snyk/actions/setup@master
+
+      # --------------------------------------------------------
+      # Run Snyk
+      #
+      # IMPORTANT:
+      # We intentionally DO NOT use --severity-threshold here.
+      #
+      # We want the complete vulnerability result so our own
+      # evaluator can apply the thresholds selected by the user.
+      # --------------------------------------------------------
+
+      - name: Run Snyk vulnerability scan
+        id: snyk
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          set +e
+
+          if [ -f "requirements.txt" ]; then
+            snyk test \
+              --file=requirements.txt \
+              --package-manager=pip \
+              --json-file-output=snyk-report.json
+
+          elif [ -f "pyproject.toml" ]; then
+            snyk test \
+              --file=pyproject.toml \
+              --json-file-output=snyk-report.json
+
+          else
+            snyk test \
+              --json-file-output=snyk-report.json
+          fi
+
+          SNYK_EXIT=$?
+
+          echo "Snyk exit code: $SNYK_EXIT"
+
+          # Snyk returns non-zero when vulnerabilities are found.
+          # We intentionally continue because our evaluator
+          # decides whether the configured threshold is exceeded.
+
+          exit 0
+
+      # --------------------------------------------------------
+      # Make sure JSON exists
+      # --------------------------------------------------------
+
+      - name: Validate Snyk report
+        run: |
+          if [ ! -f "snyk-report.json" ]; then
+            echo "ERROR: Snyk report was not generated."
+            exit 1
+          fi
+
+          echo "Snyk report generated successfully."
+          ls -lh snyk-report.json
+
+      # --------------------------------------------------------
+      # Evaluate vulnerabilities
+      # --------------------------------------------------------
+
+      - name: Evaluate security thresholds
+        id: evaluate
+        env:
+          SEVERITY_MODE: ${{ inputs.severity_mode }}
+
+          CHECK_CRITICAL: ${{ inputs.check_critical }}
+          CHECK_HIGH: ${{ inputs.check_high }}
+          CHECK_MEDIUM: ${{ inputs.check_medium }}
+          CHECK_LOW: ${{ inputs.check_low }}
+
+          CRITICAL_THRESHOLD: ${{ inputs.critical_threshold }}
+          HIGH_THRESHOLD: ${{ inputs.high_threshold }}
+          MEDIUM_THRESHOLD: ${{ inputs.medium_threshold }}
+          LOW_THRESHOLD: ${{ inputs.low_threshold }}
+
+        run: |
+          python <<'PY'
+          import json
+          import os
+          import sys
+
+          REPORT = "snyk-report.json"
+
+          with open(REPORT, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          vulnerabilities = data.get("vulnerabilities", [])
+
+          counts = {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0,
+          }
+
+          for vuln in vulnerabilities:
+              severity = str(vuln.get("severity", "")).lower()
+
+              if severity in counts:
+                  counts[severity] += 1
+
+          mode = os.environ["SEVERITY_MODE"]
+
+          selected = {
+              "critical": True,
+              "high": True,
+              "medium": True,
+              "low": True,
+          }
+
+          if mode == "SELECTIVE":
+              selected = {
+                  "critical": os.environ["CHECK_CRITICAL"].lower() == "true",
+                  "high": os.environ["CHECK_HIGH"].lower() == "true",
+                  "medium": os.environ["CHECK_MEDIUM"].lower() == "true",
+                  "low": os.environ["CHECK_LOW"].lower() == "true",
+              }
+
+          thresholds = {
+              "critical": int(os.environ["CRITICAL_THRESHOLD"]),
+              "high": int(os.environ["HIGH_THRESHOLD"]),
+              "medium": int(os.environ["MEDIUM_THRESHOLD"]),
+              "low": int(os.environ["LOW_THRESHOLD"]),
+          }
+
+          failures = []
+
+          for severity in counts:
+
+              if not selected[severity]:
+                  continue
+
+              if counts[severity] > thresholds[severity]:
+                  failures.append(severity)
+
+          status = "FAIL" if failures else "PASS"
+
+          # ----------------------------------------------------
+          # GitHub outputs
+          # ----------------------------------------------------
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"security_status={status}\n")
+              out.write(f"critical_count={counts['critical']}\n")
+              out.write(f"high_count={counts['high']}\n")
+              out.write(f"medium_count={counts['medium']}\n")
+              out.write(f"low_count={counts['low']}\n")
+
+          # ----------------------------------------------------
+          # Build security summary
+          # ----------------------------------------------------
+
+          def result_line(severity):
+
+              if not selected[severity]:
+                  return f"{severity.upper():10} {counts[severity]:5}   NOT SELECTED"
+
+              result = (
+                  "PASS"
+                  if counts[severity] <= thresholds[severity]
+                  else "FAIL"
+              )
+
+              return (
+                  f"{severity.upper():10} "
+                  f"{counts[severity]:5} / "
+                  f"{thresholds[severity]:5}   {result}"
+              )
+
+          summary = f"""
+          ========================================
+                SNYK SECURITY SUMMARY
+          ========================================
+
+          Repository:
+          {os.environ.get('GITHUB_REPOSITORY')}
+
+          Branch:
+          {os.environ.get('GITHUB_REF_NAME')}
+
+          Commit:
+          {os.environ.get('GITHUB_SHA')}
+
+          Severity Mode:
+          {mode}
+
+          ----------------------------------------
+          Vulnerabilities
+          ----------------------------------------
+
+          {result_line("critical")}
+          {result_line("high")}
+          {result_line("medium")}
+          {result_line("low")}
+
+          ----------------------------------------
+          Overall Security Gate: {status}
+          ----------------------------------------
+
+          """
+
+          print(summary)
+
+          with open("security-summary.txt", "w", encoding="utf-8") as f:
+              f.write(summary)
+
+          # ----------------------------------------------------
+          # GitHub Job Summary
+          # ----------------------------------------------------
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+
+              f.write("## 🔐 Snyk Security Summary\n\n")
+
+              f.write(
+                  f"**Repository:** `{os.environ.get('GITHUB_REPOSITORY')}`  \n"
+              )
+
+              f.write(
+                  f"**Branch:** `{os.environ.get('GITHUB_REF_NAME')}`  \n"
+              )
+
+              f.write(
+                  f"**Commit:** `{os.environ.get('GITHUB_SHA')}`  \n\n"
+              )
+
+              f.write(f"### Severity Mode: `{mode}`\n\n")
+
+              f.write("| Severity | Found | Threshold | Status |\n")
+              f.write("|---|---:|---:|---|\n")
+
+              for severity in ["critical", "high", "medium", "low"]:
+
+                  if not selected[severity]:
+                      result = "NOT SELECTED"
+                  else:
+                      result = (
+                          "PASS"
+                          if counts[severity] <= thresholds[severity]
+                          else "FAIL"
+                      )
+
+                  threshold = (
+                      thresholds[severity]
+                      if selected[severity]
+                      else "-"
+                  )
+
+                  f.write(
+                      f"| {severity.upper()} | "
+                      f"{counts[severity]} | "
+                      f"{threshold} | "
+                      f"{result} |\n"
+                  )
+
+              f.write(
+                  f"\n### Overall Security Gate: **{status}**\n"
+              )
+
+          # Do NOT exit 1 here.
+          #
+          # Even if security fails, we want the report to reach
+          # the approval step.
+          PY
+
+      # --------------------------------------------------------
+      # Generate PDF
+      # --------------------------------------------------------
+
+      - name: Generate PDF vulnerability report
+        run: |
+          python <<'PY'
+          import json
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib.styles import getSampleStyleSheet
+          from reportlab.lib import colors
+          from reportlab.platypus import (
+              SimpleDocTemplate,
+              Paragraph,
+              Spacer,
+              Table,
+              TableStyle,
+              PageBreak
+          )
+
+          report_file = "snyk-report.json"
+          pdf_file = "snyk-vulnerability-report.pdf"
+
+          with open(report_file, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          vulnerabilities = data.get("vulnerabilities", [])
+
+          counts = {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+          }
+
+          for vuln in vulnerabilities:
+              severity = str(
+                  vuln.get("severity", "")
+              ).lower()
+
+              if severity in counts:
+                  counts[severity] += 1
+
+          styles = getSampleStyleSheet()
+
+          doc = SimpleDocTemplate(
+              pdf_file,
+              pagesize=A4,
+              rightMargin=30,
+              leftMargin=30,
+              topMargin=30,
+              bottomMargin=30
+          )
+
+          story = []
+
+          story.append(
+              Paragraph(
+                  "Snyk Vulnerability Security Report",
+                  styles["Title"]
+              )
+          )
+
+          story.append(Spacer(1, 15))
+
+          story.append(
+              Paragraph(
+                  f"Repository: {__import__('os').environ.get('GITHUB_REPOSITORY')}",
+                  styles["Normal"]
+              )
+          )
+
+          story.append(
+              Paragraph(
+                  f"Branch: {__import__('os').environ.get('GITHUB_REF_NAME')}",
+                  styles["Normal"]
+              )
+          )
+
+          story.append(
+              Paragraph(
+                  f"Commit: {__import__('os').environ.get('GITHUB_SHA')}",
+                  styles["Normal"]
+              )
+          )
+
+          story.append(Spacer(1, 20))
+
+          story.append(
+              Paragraph(
+                  "Vulnerability Summary",
+                  styles["Heading2"]
+              )
+          )
+
+          summary_table = [
+              ["Severity", "Count"],
+              ["Critical", counts["critical"]],
+              ["High", counts["high"]],
+              ["Medium", counts["medium"]],
+              ["Low", counts["low"]],
+          ]
+
+          table = Table(summary_table, colWidths=[250, 100])
+
+          table.setStyle(
+              TableStyle([
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                  ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+              ])
+          )
+
+          story.append(table)
+          story.append(Spacer(1, 20))
+
+          story.append(
+              Paragraph(
+                  "Detailed Vulnerabilities",
+                  styles["Heading2"]
+              )
+          )
+
+          detail_data = [
+              [
+                  "Severity",
+                  "Package",
+                  "Version",
+                  "Issue"
+              ]
+          ]
+
+          for vuln in vulnerabilities:
+
+              severity = vuln.get("severity", "")
+              package = vuln.get("packageName", "")
+              version = vuln.get("version", "")
+              title = vuln.get("title", "")
+
+              detail_data.append([
+                  severity,
+                  package,
+                  version,
+                  title[:100]
+              ])
+
+          if len(detail_data) == 1:
+              detail_data.append([
+                  "None",
+                  "-",
+                  "-",
+                  "No vulnerabilities found"
+              ])
+
+          detail_table = Table(
+              detail_data,
+              repeatRows=1,
+              colWidths=[70, 120, 70, 230]
+          )
+
+          detail_table.setStyle(
+              TableStyle([
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 7),
+                  ("VALIGN", (0, 0), (-1, -1), "TOP"),
+              ])
+          )
+
+          story.append(detail_table)
+
+          doc.build(story)
+
+          print(f"PDF generated: {pdf_file}")
+          PY
+
+      # --------------------------------------------------------
+      # Upload report
+      # --------------------------------------------------------
+
+      - name: Upload Snyk PDF and JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-security-report
+          path: |
+            snyk-vulnerability-report.pdf
+            snyk-report.json
+            security-summary.txt
+          retention-days: 30
+
+      # --------------------------------------------------------
+      # Prepare approval request body
+      # --------------------------------------------------------
+
+      - name: Prepare approval request
+        run: |
+
+          cat > approval-body.md <<EOF
+          ## 🔐 Snyk Security Approval Required
+
+          **Repository:** \`${GITHUB_REPOSITORY}\`
+
+          **Branch:** \`${GITHUB_REF_NAME}\`
+
+          **Commit:** \`${GITHUB_SHA}\`
+
+          **Workflow Run:** [View GitHub Actions Run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+
+          ---
+
+          ### Vulnerability Summary
+
+          | Severity | Found | Threshold | Status |
+          |---|---:|---:|---|
+          | 🔴 CRITICAL | ${{ steps.evaluate.outputs.critical_count }} | ${{ inputs.critical_threshold }} | See report |
+          | 🟠 HIGH | ${{ steps.evaluate.outputs.high_count }} | ${{ inputs.high_threshold }} | See report |
+          | 🟡 MEDIUM | ${{ steps.evaluate.outputs.medium_count }} | ${{ inputs.medium_threshold }} | See report |
+          | 🟢 LOW | ${{ steps.evaluate.outputs.low_count }} | ${{ inputs.low_threshold }} | See report |
+
+          ### Security Gate
+
+          **${{ steps.evaluate.outputs.security_status }}**
+
+          ---
+
+          ### Reports
+
+          The workflow run contains:
+
+          - \`snyk-vulnerability-report.pdf\`
+          - \`snyk-report.json\`
+          - \`security-summary.txt\`
+
+          Open the workflow run above and download the **snyk-security-report** artifact to review the complete PDF.
+
+          ---
+
+          ### Approval
+
+          Please review the vulnerability report before approving.
+
+          **To approve:** comment `APPROVE`
+
+          **To decline:** comment `DECLINE`
+
+          If declined, Docker build and ECR push will NOT happen.
+
+          If approved, the workflow will continue to Docker build, ECR push and Cosign signing.
+
+          ---
+
+          **Security Gate Result:** ${{ steps.evaluate.outputs.security_status }}
+
+          **Requested by:** @${{ github.actor }}
+          EOF
+
+      # --------------------------------------------------------
+      # Manual approval
+      # --------------------------------------------------------
+
+      - name: Security approval
+        uses: trstringer/manual-approval@v1
+        timeout-minutes: 60
+        with:
+          secret: ${{ github.token }}
+
+          # CHANGE THIS if another user/team should approve.
+          approvers: ${{ env.APPROVERS }}
+
+          minimum-approvals: 1
+
+          issue-title: "🔐 Security Approval - ${{ github.repository }} - ${{ github.ref_name }}"
+
+          issue-body-file-path: approval-body.md
+
+          exclude-workflow-initiator-as-approver: false
+
+          fail-on-denial: true
+
+          additional-approved-words: "APPROVE"
+
+          additional-denied-words: "DECLINE"
+
+          polling-interval-seconds: 10
+
+
+  # ============================================================
+  # 2. DOCKER BUILD + ECR PUSH + COSIGN
+  # ============================================================
+
+  build-push-sign:
+    name: Build, Push and Sign Docker Image
+    needs: security-scan
+
+    # The security-scan job itself does not fail when the
+    # vulnerability threshold fails because the approver is
+    # allowed to make the final decision.
+    #
+    # If approval is denied, the previous job fails and this
+    # job will NOT run.
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout EXACT commit that was scanned
+      # --------------------------------------------------------
+
+      - name: Checkout scanned commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      # --------------------------------------------------------
+      # Configure AWS using OIDC
+      # --------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityPOC
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+
+      # --------------------------------------------------------
+      # Verify AWS identity
+      # --------------------------------------------------------
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+      # --------------------------------------------------------
+      # Login to ECR
+      # --------------------------------------------------------
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --------------------------------------------------------
+      # Generate image tag
+      # --------------------------------------------------------
+
+      - name: Set Docker image variables
+        id: image
+        run: |
+
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}"
+
+          SHORT_SHA="${GITHUB_SHA::12}"
+
+          IMAGE_TAG="${GITHUB_REF_NAME}-${SHORT_SHA}"
+
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+          echo "IMAGE URI : ${IMAGE_URI}"
+          echo "IMAGE TAG : ${IMAGE_TAG}"
+
+      # --------------------------------------------------------
+      # Docker Build
+      # --------------------------------------------------------
+
+      - name: Build Docker image
+        run: |
+
+          docker build \
+            -t "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}" \
+            .
+
+      # --------------------------------------------------------
+      # Push image to ECR
+      #
+      # NOTE:
+      # We push first because normal Cosign registry signing
+      # operates against the registry image reference.
+      # --------------------------------------------------------
+
+      - name: Push Docker image to ECR
+        run: |
+
+          docker push \
+            "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}"
+
+      # --------------------------------------------------------
+      # Install Cosign
+      # --------------------------------------------------------
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # --------------------------------------------------------
+      # Cosign keyless signing
+      #
+      # GitHub OIDC is used by Sigstore for keyless signing.
+      # No private signing key is stored in GitHub Secrets.
+      # --------------------------------------------------------
+
+      - name: Sign Docker image with Cosign
+        env:
+          COSIGN_YES: "true"
+        run: |
+
+          cosign sign \
+            "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}"
+
+      # --------------------------------------------------------
+      # Resolve immutable digest
+      # --------------------------------------------------------
+
+      - name: Get ECR image digest
+        id: digest
+        run: |
+
+          DIGEST=$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${{ steps.image.outputs.image_tag }}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "=========================================="
+          echo "IMAGE DEPLOYMENT INFORMATION"
+          echo "=========================================="
+          echo "Repository:"
+          echo "${{ steps.image.outputs.image_uri }}"
+          echo ""
+          echo "Tag:"
+          echo "${{ steps.image.outputs.image_tag }}"
+          echo ""
+          echo "Digest:"
+          echo "${DIGEST}"
+          echo ""
+          echo "=========================================="
+
+      # --------------------------------------------------------
+      # Final GitHub Summary
+      # --------------------------------------------------------
+
+      - name: Final deployment summary
+        run: |
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+
+          # 🚀 Secure Image Published
+
+          | Item | Value |
+          |---|---|
+          | Repository | \`${{ steps.image.outputs.image_uri }}\` |
+          | Tag | \`${{ steps.image.outputs.image_tag }}\` |
+          | Digest | \`${{ steps.digest.outputs.digest }}\` |
+          | Branch | \`${GITHUB_REF_NAME}\` |
+          | Commit | \`${GITHUB_SHA}\` |
+          | Security Approval | ✅ APPROVED |
+          | Cosign | ✅ SIGNED |
+
+          EOF
