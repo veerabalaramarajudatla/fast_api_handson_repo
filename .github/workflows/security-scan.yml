@@ -155,39 +155,43 @@ jobs:
       # Snyk needs the Python dependency information resolved.
       # ----------------------------------------------------------
 
-      - name: Install Python dependencies
+      - name: Install workflow and application dependencies
         working-directory: ./app
         run: |
-
           echo "=========================================="
           echo "Python Version"
           echo "=========================================="
-
           python --version
-
+      
           echo ""
-
           echo "=========================================="
           echo "Upgrading pip"
           echo "=========================================="
-
           python -m pip install --upgrade pip
-
+      
           echo ""
-
           echo "=========================================="
-          echo "Installing application dependencies"
+          echo "Installing Application Dependencies"
           echo "=========================================="
-
-          pip install -r requirements.txt
-
+          python -m pip install -r requirements.txt
+      
           echo ""
-
           echo "=========================================="
-          echo "Installed packages"
+          echo "Installing PDF Report Dependency"
           echo "=========================================="
-
-          pip list
+          python -m pip install reportlab
+      
+          echo ""
+          echo "=========================================="
+          echo "Verifying ReportLab"
+          echo "=========================================="
+          python -c "import reportlab; print('ReportLab version:', reportlab.Version)"
+      
+          echo ""
+          echo "=========================================="
+          echo "Installed Packages"
+          echo "=========================================="
+          python -m pip list
 
 
       # ----------------------------------------------------------
