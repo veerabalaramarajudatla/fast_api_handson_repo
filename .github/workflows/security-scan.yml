@@ -144,29 +144,67 @@ jobs:
         run: |
           set +e
 
-          if [ -f "requirements.txt" ]; then
+          echo "=========================================="
+          echo "Searching for Python dependency files..."
+          echo "=========================================="
+
+          REQUIREMENTS_FILE=$(find . \
+            -type f \
+            -name "requirements.txt" \
+            -not -path "./.git/*" \
+            | head -n 1)
+
+          PYPROJECT_FILE=$(find . \
+            -type f \
+            -name "pyproject.toml" \
+            -not -path "./.git/*" \
+            | head -n 1)
+
+          if [ -n "$REQUIREMENTS_FILE" ]; then
+
+            echo "Found requirements file:"
+            echo "$REQUIREMENTS_FILE"
+
             snyk test \
-              --file=requirements.txt \
+              --file="$REQUIREMENTS_FILE" \
               --package-manager=pip \
               --json-file-output=snyk-report.json
 
-          elif [ -f "pyproject.toml" ]; then
+            SNYK_EXIT=$?
+
+          elif [ -n "$PYPROJECT_FILE" ]; then
+
+            echo "Found pyproject.toml:"
+            echo "$PYPROJECT_FILE"
+
             snyk test \
-              --file=pyproject.toml \
+              --file="$PYPROJECT_FILE" \
               --json-file-output=snyk-report.json
+
+            SNYK_EXIT=$?
 
           else
-            snyk test \
-              --json-file-output=snyk-report.json
+
+            echo "ERROR: No supported Python dependency file found."
+
+            echo ""
+            echo "Files found in repository:"
+            find . -maxdepth 4 -type f \
+              -not -path "./.git/*" \
+              | sort
+
+            exit 1
+
           fi
 
-          SNYK_EXIT=$?
-
+          echo ""
+          echo "=========================================="
           echo "Snyk exit code: $SNYK_EXIT"
+          echo "=========================================="
 
           # Snyk returns non-zero when vulnerabilities are found.
-          # We intentionally continue because our evaluator
-          # decides whether the configured threshold is exceeded.
+          # We intentionally don't fail here because our own
+          # threshold evaluator handles the security gate.
 
           exit 0
 
