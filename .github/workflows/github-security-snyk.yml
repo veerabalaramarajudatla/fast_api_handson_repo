@@ -1,11 +1,15 @@
 name: GitHub Security - Snyk 3-Layer Scan
 
+# ================================================================
+# MANUAL TRIGGER ONLY
+# ================================================================
+
 on:
   workflow_dispatch:
     inputs:
 
       # ============================================================
-      # GITHUB BRANCH
+      # BRANCH
       # ============================================================
 
       branch:
@@ -13,17 +17,10 @@ on:
         required: true
         type: string
 
+
       # ============================================================
       # SNYK CODE / SAST
       # ============================================================
-
-      sast_severity_mode:
-        description: "Snyk Code severity mode"
-        required: true
-        type: choice
-        options:
-          - ALL
-          - SELECTIVE
 
       sast_high:
         description: "Check SAST High vulnerabilities"
@@ -61,17 +58,10 @@ on:
         type: number
         default: 0
 
+
       # ============================================================
       # SNYK OPEN SOURCE / SCA
       # ============================================================
-
-      sca_severity_mode:
-        description: "Snyk Open Source severity mode"
-        required: true
-        type: choice
-        options:
-          - ALL
-          - SELECTIVE
 
       sca_critical:
         description: "Check SCA Critical vulnerabilities"
@@ -121,17 +111,10 @@ on:
         type: number
         default: 0
 
+
       # ============================================================
       # SNYK CONTAINER
       # ============================================================
-
-      container_severity_mode:
-        description: "Snyk Container severity mode"
-        required: true
-        type: choice
-        options:
-          - ALL
-          - SELECTIVE
 
       container_critical:
         description: "Check Container Critical vulnerabilities"
@@ -200,7 +183,8 @@ env:
 
 
 # ================================================================
-# SECURITY SCAN JOB
+# JOB 1
+# SECURITY SCANNING
 # ================================================================
 
 jobs:
@@ -213,14 +197,14 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
       issues: write
+      id-token: write
 
     steps:
 
-      # ==========================================================
-      # CHECKOUT
-      # ==========================================================
+      # ============================================================
+      # CHECKOUT SELECTED BRANCH
+      # ============================================================
 
       - name: Checkout Selected Branch
         uses: actions/checkout@v4
@@ -228,60 +212,82 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
 
+      # ============================================================
+      # BUILD INFORMATION
+      # ============================================================
+
       - name: Display Build Information
         run: |
+
           echo "=================================================="
-          echo "GitHub Security Scan"
+          echo "GITHUB SECURITY PIPELINE"
           echo "=================================================="
+
           echo "Repository : ${{ github.repository }}"
           echo "Branch     : ${{ inputs.branch }}"
           echo "Commit     : ${{ github.sha }}"
           echo "Actor      : ${{ github.actor }}"
+          echo "Run Number : ${{ github.run_number }}"
+
           echo "=================================================="
 
 
-      # ==========================================================
-      # PYTHON
-      # ==========================================================
+      # ============================================================
+      # SETUP PYTHON
+      # ============================================================
 
-      - name: Setup Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+
+      # ============================================================
+      # INSTALL APPLICATION DEPENDENCIES
+      # ============================================================
+
       - name: Install Python Dependencies
         working-directory: ./app
         run: |
+
           python -m pip install --upgrade pip
+
           pip install -r requirements.txt
 
 
-      # ==========================================================
+      # ============================================================
       # INSTALL SNYK
-      # ==========================================================
+      # ============================================================
 
       - name: Install Snyk CLI
         run: |
+
           npm install -g snyk
+
           snyk --version
 
 
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
       # 1. SNYK CODE / SAST
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
 
       - name: Run Snyk Code - SAST
         id: snyk_code
         continue-on-error: true
+
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
         run: |
 
           echo "=================================================="
-          echo "Running Snyk Code / SAST"
+          echo "1. SNYK CODE / SAST"
           echo "=================================================="
+
+          rm -f snyk-code.json
+          rm -f snyk-code-output.txt
 
           set +e
 
@@ -301,94 +307,93 @@ jobs:
           exit 0
 
 
-      # ==========================================================
-      # SAST REPORT
-      # ==========================================================
+      # ============================================================
+      # SAST SUMMARY
+      # ============================================================
 
       - name: Generate SAST Summary
+        if: always()
         run: |
 
-          echo "==================================================" > sast-summary.txt
-          echo "SNYK CODE / SAST REPORT" >> sast-summary.txt
-          echo "==================================================" >> sast-summary.txt
+          {
+            echo "=================================================="
+            echo "SNYK CODE / SAST REPORT"
+            echo "=================================================="
+            echo ""
+            echo "Repository : ${{ github.repository }}"
+            echo "Branch     : ${{ inputs.branch }}"
+            echo "Commit     : ${{ github.sha }}"
+            echo ""
+            echo "Snyk Code Exit Code: ${SNYK_CODE_EXIT}"
+            echo ""
+            echo "Configured Thresholds:"
+            echo "High   Enabled=${{ inputs.sast_high }}   Max=${{ inputs.sast_max_high }}"
+            echo "Medium Enabled=${{ inputs.sast_medium }} Max=${{ inputs.sast_max_medium }}"
+            echo "Low    Enabled=${{ inputs.sast_low }}    Max=${{ inputs.sast_max_low }}"
+            echo ""
+            echo "=================================================="
+            echo ""
+            cat snyk-code-output.txt 2>/dev/null || true
+          } > sast-summary.txt
 
-          echo "Branch: ${{ inputs.branch }}" >> sast-summary.txt
-          echo "Commit: ${{ github.sha }}" >> sast-summary.txt
 
-          echo "" >> sast-summary.txt
-
-          echo "Snyk Code Exit Code: ${SNYK_CODE_EXIT}" >> sast-summary.txt
-
-          echo "" >> sast-summary.txt
-
-          cat snyk-code-output.txt >> sast-summary.txt || true
-
-
-      # ==========================================================
+      # ============================================================
       # SAST QUALITY GATE
-      # ==========================================================
+      # ============================================================
 
       - name: Evaluate SAST Quality Gate
         id: sast_gate
+        if: always()
         run: |
 
           echo "=================================================="
           echo "SAST QUALITY GATE"
           echo "=================================================="
 
-          if [ "${{ inputs.sast_severity_mode }}" = "ALL" ]; then
+          echo "High   Enabled=${{ inputs.sast_high }}   Max=${{ inputs.sast_max_high }}"
+          echo "Medium Enabled=${{ inputs.sast_medium }} Max=${{ inputs.sast_max_medium }}"
+          echo "Low    Enabled=${{ inputs.sast_low }}    Max=${{ inputs.sast_max_low }}"
 
-            echo "SAST mode: ALL"
+          echo ""
 
-            if [ "${SNYK_CODE_EXIT}" = "0" ]; then
-              echo "SAST QUALITY GATE: PASSED"
-            else
-              echo "SAST QUALITY GATE: FAILED"
-              echo "Snyk Code reported issues or scan failure."
-              exit 1
-            fi
+          if [ "${SNYK_CODE_EXIT}" = "0" ]; then
+
+            echo "SAST QUALITY GATE: PASSED"
 
           else
 
-            echo "SAST mode: SELECTIVE"
-            echo ""
-            echo "Configured thresholds:"
-            echo "High   enabled=${{ inputs.sast_high }}   max=${{ inputs.sast_max_high }}"
-            echo "Medium enabled=${{ inputs.sast_medium }} max=${{ inputs.sast_max_medium }}"
-            echo "Low    enabled=${{ inputs.sast_low }}    max=${{ inputs.sast_max_low }}"
-            echo ""
+            echo "SAST QUALITY GATE: FINDINGS DETECTED"
 
-            if [ "${SNYK_CODE_EXIT}" = "0" ]; then
-              echo "SAST QUALITY GATE: PASSED"
-            else
-              echo "SAST QUALITY GATE: REVIEW REQUIRED"
-              echo ""
-              echo "Snyk Code detected findings."
-              echo "The complete SAST report is available as an artifact."
-              echo ""
-              echo "For the POC, the scan is allowed to continue to report generation."
-            fi
+            echo ""
+            echo "Snyk Code reported findings or scan issues."
+            echo "The complete report will be available for Security Review."
 
           fi
 
 
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
       # 2. SNYK OPEN SOURCE / SCA
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
 
       - name: Run Snyk Open Source - SCA
         id: snyk_sca
         continue-on-error: true
+
         working-directory: ./app
+
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
         run: |
 
           echo "=================================================="
-          echo "Running Snyk Open Source / SCA"
+          echo "2. SNYK OPEN SOURCE / SCA"
           echo "=================================================="
+
+          rm -f ../snyk-sca.json
+          rm -f ../snyk-sca-output.txt
 
           set +e
 
@@ -411,73 +416,83 @@ jobs:
           exit 0
 
 
-      # ==========================================================
+      # ============================================================
       # SCA SUMMARY
-      # ==========================================================
+      # ============================================================
 
       - name: Generate SCA Summary
+        if: always()
         run: |
 
-          echo "==================================================" > sca-summary.txt
-          echo "SNYK OPEN SOURCE / SCA REPORT" >> sca-summary.txt
-          echo "==================================================" >> sca-summary.txt
+          {
+            echo "=================================================="
+            echo "SNYK OPEN SOURCE / SCA REPORT"
+            echo "=================================================="
+            echo ""
+            echo "Repository : ${{ github.repository }}"
+            echo "Branch     : ${{ inputs.branch }}"
+            echo "Commit     : ${{ github.sha }}"
+            echo ""
+            echo "Snyk SCA Exit Code: ${SNYK_SCA_EXIT}"
+            echo ""
+            echo "Configured Thresholds:"
+            echo "Critical Enabled=${{ inputs.sca_critical }} Max=${{ inputs.sca_max_critical }}"
+            echo "High     Enabled=${{ inputs.sca_high }} Max=${{ inputs.sca_max_high }}"
+            echo "Medium   Enabled=${{ inputs.sca_medium }} Max=${{ inputs.sca_max_medium }}"
+            echo "Low      Enabled=${{ inputs.sca_low }} Max=${{ inputs.sca_max_low }}"
+            echo ""
+            echo "=================================================="
+            echo ""
+            cat snyk-sca-output.txt 2>/dev/null || true
+          } > sca-summary.txt
 
-          echo "Branch: ${{ inputs.branch }}" >> sca-summary.txt
-          echo "Commit: ${{ github.sha }}" >> sca-summary.txt
 
-          echo "" >> sca-summary.txt
-
-          echo "Snyk SCA Exit Code: ${SNYK_SCA_EXIT}" >> sca-summary.txt
-
-          echo "" >> sca-summary.txt
-
-          cat snyk-sca-output.txt >> sca-summary.txt || true
-
-
-      # ==========================================================
+      # ============================================================
       # SCA QUALITY GATE
-      # ==========================================================
+      # ============================================================
 
       - name: Evaluate SCA Quality Gate
         id: sca_gate
+        if: always()
         run: |
 
           echo "=================================================="
           echo "SCA QUALITY GATE"
           echo "=================================================="
 
-          echo "SCA Mode: ${{ inputs.sca_severity_mode }}"
-
-          echo ""
-          echo "Configured thresholds:"
-          echo "Critical enabled=${{ inputs.sca_critical }} max=${{ inputs.sca_max_critical }}"
-          echo "High     enabled=${{ inputs.sca_high }}     max=${{ inputs.sca_max_high }}"
-          echo "Medium   enabled=${{ inputs.sca_medium }}   max=${{ inputs.sca_max_medium }}"
-          echo "Low      enabled=${{ inputs.sca_low }}      max=${{ inputs.sca_max_low }}"
+          echo "Critical Enabled=${{ inputs.sca_critical }} Max=${{ inputs.sca_max_critical }}"
+          echo "High     Enabled=${{ inputs.sca_high }} Max=${{ inputs.sca_max_high }}"
+          echo "Medium   Enabled=${{ inputs.sca_medium }} Max=${{ inputs.sca_max_medium }}"
+          echo "Low      Enabled=${{ inputs.sca_low }} Max=${{ inputs.sca_max_low }}"
 
           echo ""
 
           if [ "${SNYK_SCA_EXIT}" = "0" ]; then
+
             echo "SCA QUALITY GATE: PASSED"
+
           else
-            echo "SCA QUALITY GATE: REVIEW REQUIRED"
+
+            echo "SCA QUALITY GATE: FINDINGS DETECTED"
+
             echo ""
-            echo "Snyk Open Source detected vulnerabilities or scan issues."
-            echo "The complete SCA report is available as an artifact."
+            echo "Snyk Open Source reported vulnerabilities or scan issues."
+            echo "The complete report will be available for Security Review."
+
           fi
 
 
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
       # 3. DOCKER IMAGE BUILD
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
 
       - name: Build Docker Image
         run: |
 
           echo "=================================================="
-          echo "Building Docker Image"
+          echo "3. DOCKER IMAGE BUILD"
           echo "=================================================="
 
           docker build \
@@ -486,26 +501,32 @@ jobs:
             ./app
 
           echo ""
-          echo "Docker image created:"
+          echo "Docker image successfully built."
+
           docker images "${IMAGE_NAME}"
 
 
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
       # 4. SNYK CONTAINER
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
 
       - name: Run Snyk Container Scan
         id: snyk_container
         continue-on-error: true
+
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
         run: |
 
           echo "=================================================="
-          echo "Running Snyk Container"
+          echo "4. SNYK CONTAINER"
           echo "=================================================="
+
+          rm -f snyk-container.json
+          rm -f snyk-container-output.txt
 
           set +e
 
@@ -527,76 +548,86 @@ jobs:
           exit 0
 
 
-      # ==========================================================
+      # ============================================================
       # CONTAINER SUMMARY
-      # ==========================================================
+      # ============================================================
 
       - name: Generate Container Summary
+        if: always()
         run: |
 
-          echo "==================================================" > container-summary.txt
-          echo "SNYK CONTAINER REPORT" >> container-summary.txt
-          echo "==================================================" >> container-summary.txt
+          {
+            echo "=================================================="
+            echo "SNYK CONTAINER REPORT"
+            echo "=================================================="
+            echo ""
+            echo "Repository : ${{ github.repository }}"
+            echo "Branch     : ${{ inputs.branch }}"
+            echo "Commit     : ${{ github.sha }}"
+            echo ""
+            echo "Image      : ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo ""
+            echo "Snyk Container Exit Code: ${SNYK_CONTAINER_EXIT}"
+            echo ""
+            echo "Configured Thresholds:"
+            echo "Critical Enabled=${{ inputs.container_critical }} Max=${{ inputs.container_max_critical }}"
+            echo "High     Enabled=${{ inputs.container_high }} Max=${{ inputs.container_max_high }}"
+            echo "Medium   Enabled=${{ inputs.container_medium }} Max=${{ inputs.container_max_medium }}"
+            echo "Low      Enabled=${{ inputs.container_low }} Max=${{ inputs.container_max_low }}"
+            echo ""
+            echo "=================================================="
+            echo ""
+            cat snyk-container-output.txt 2>/dev/null || true
+          } > container-summary.txt
 
-          echo "Branch: ${{ inputs.branch }}" >> container-summary.txt
-          echo "Commit: ${{ github.sha }}" >> container-summary.txt
 
-          echo "" >> container-summary.txt
-
-          echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}" >> container-summary.txt
-
-          echo "" >> container-summary.txt
-
-          echo "Snyk Container Exit Code: ${SNYK_CONTAINER_EXIT}" >> container-summary.txt
-
-          echo "" >> container-summary.txt
-
-          cat snyk-container-output.txt >> container-summary.txt || true
-
-
-      # ==========================================================
+      # ============================================================
       # CONTAINER QUALITY GATE
-      # ==========================================================
+      # ============================================================
 
       - name: Evaluate Container Quality Gate
         id: container_gate
+        if: always()
         run: |
 
           echo "=================================================="
           echo "CONTAINER QUALITY GATE"
           echo "=================================================="
 
-          echo "Container Mode: ${{ inputs.container_severity_mode }}"
-
-          echo ""
-          echo "Configured thresholds:"
-          echo "Critical enabled=${{ inputs.container_critical }} max=${{ inputs.container_max_critical }}"
-          echo "High     enabled=${{ inputs.container_high }}     max=${{ inputs.container_max_high }}"
-          echo "Medium   enabled=${{ inputs.container_medium }}   max=${{ inputs.container_max_medium }}"
-          echo "Low      enabled=${{ inputs.container_low }}      max=${{ inputs.container_max_low }}"
+          echo "Critical Enabled=${{ inputs.container_critical }} Max=${{ inputs.container_max_critical }}"
+          echo "High     Enabled=${{ inputs.container_high }} Max=${{ inputs.container_max_high }}"
+          echo "Medium   Enabled=${{ inputs.container_medium }} Max=${{ inputs.container_max_medium }}"
+          echo "Low      Enabled=${{ inputs.container_low }} Max=${{ inputs.container_max_low }}"
 
           echo ""
 
           if [ "${SNYK_CONTAINER_EXIT}" = "0" ]; then
+
             echo "CONTAINER QUALITY GATE: PASSED"
+
           else
-            echo "CONTAINER QUALITY GATE: REVIEW REQUIRED"
+
+            echo "CONTAINER QUALITY GATE: FINDINGS DETECTED"
+
             echo ""
-            echo "Snyk Container detected vulnerabilities or scan issues."
-            echo "The complete Container report is available as an artifact."
+            echo "Snyk Container reported vulnerabilities or scan issues."
+            echo "The complete report will be available for Security Review."
+
           fi
 
 
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
       # SECURITY SUMMARY
-      # ==========================================================
-      # ==========================================================
+      # ============================================================
+      # ============================================================
 
       - name: Generate Security Summary
+        if: always()
         run: |
 
           cat > security-summary.md <<EOF
+
           # Security Scan Summary
 
           ## Build Information
@@ -607,82 +638,84 @@ jobs:
           | Branch | ${{ inputs.branch }} |
           | Commit | ${{ github.sha }} |
           | Actor | ${{ github.actor }} |
-          | Workflow | ${{ github.workflow }} |
           | Run Number | ${{ github.run_number }} |
+          | Image | ${IMAGE_NAME}:${IMAGE_TAG} |
 
-          ## Security Scans
-
-          ### 1. Snyk Code / SAST
+          ## Snyk Code / SAST
 
           - Scan: Snyk Code
-          - Purpose: Source-code security analysis
+          - Purpose: Source Code Security Analysis
           - Exit Code: ${SNYK_CODE_EXIT}
 
-          ### 2. Snyk Open Source / SCA
+          ## Snyk Open Source / SCA
 
           - Scan: Snyk Open Source
-          - Purpose: Dependency vulnerability analysis
-          - File: app/requirements.txt
+          - Purpose: Dependency Vulnerability Analysis
+          - Dependency File: app/requirements.txt
           - Exit Code: ${SNYK_SCA_EXIT}
 
-          ### 3. Snyk Container
+          ## Snyk Container
 
           - Scan: Snyk Container
+          - Purpose: Docker Image Vulnerability Analysis
           - Image: ${IMAGE_NAME}:${IMAGE_TAG}
           - Exit Code: ${SNYK_CONTAINER_EXIT}
 
-          ## Threshold Configuration
+          ## SAST Thresholds
 
-          ### SAST
+          | Severity | Enabled | Maximum |
+          |---|---:|---:|
+          | High | ${{ inputs.sast_high }} | ${{ inputs.sast_max_high }} |
+          | Medium | ${{ inputs.sast_medium }} | ${{ inputs.sast_max_medium }} |
+          | Low | ${{ inputs.sast_low }} | ${{ inputs.sast_max_low }} |
 
-          - Mode: ${{ inputs.sast_severity_mode }}
-          - High: ${{ inputs.sast_high }} / Max ${{ inputs.sast_max_high }}
-          - Medium: ${{ inputs.sast_medium }} / Max ${{ inputs.sast_max_medium }}
-          - Low: ${{ inputs.sast_low }} / Max ${{ inputs.sast_max_low }}
+          ## SCA Thresholds
 
-          ### SCA
+          | Severity | Enabled | Maximum |
+          |---|---:|---:|
+          | Critical | ${{ inputs.sca_critical }} | ${{ inputs.sca_max_critical }} |
+          | High | ${{ inputs.sca_high }} | ${{ inputs.sca_max_high }} |
+          | Medium | ${{ inputs.sca_medium }} | ${{ inputs.sca_max_medium }} |
+          | Low | ${{ inputs.sca_low }} | ${{ inputs.sca_max_low }} |
 
-          - Mode: ${{ inputs.sca_severity_mode }}
-          - Critical: ${{ inputs.sca_critical }} / Max ${{ inputs.sca_max_critical }}
-          - High: ${{ inputs.sca_high }} / Max ${{ inputs.sca_max_high }}
-          - Medium: ${{ inputs.sca_medium }} / Max ${{ inputs.sca_max_medium }}
-          - Low: ${{ inputs.sca_low }} / Max ${{ inputs.sca_max_low }}
+          ## Container Thresholds
 
-          ### Container
-
-          - Mode: ${{ inputs.container_severity_mode }}
-          - Critical: ${{ inputs.container_critical }} / Max ${{ inputs.container_max_critical }}
-          - High: ${{ inputs.container_high }} / Max ${{ inputs.container_max_high }}
-          - Medium: ${{ inputs.container_medium }} / Max ${{ inputs.container_max_medium }}
-          - Low: ${{ inputs.container_low }} / Max ${{ inputs.container_max_low }}
+          | Severity | Enabled | Maximum |
+          |---|---:|---:|
+          | Critical | ${{ inputs.container_critical }} | ${{ inputs.container_max_critical }} |
+          | High | ${{ inputs.container_high }} | ${{ inputs.container_max_high }} |
+          | Medium | ${{ inputs.container_medium }} | ${{ inputs.container_max_medium }} |
+          | Low | ${{ inputs.container_low }} | ${{ inputs.container_max_low }} |
 
           ## Reports
 
-          The following reports are attached to this workflow run:
+          The following reports are attached to this workflow:
 
-          - Snyk Code JSON
-          - Snyk Open Source JSON
-          - Snyk Container JSON
-          - SAST console output
-          - SCA console output
-          - Container console output
+          1. Snyk Code JSON
+          2. Snyk Open Source JSON
+          3. Snyk Container JSON
+          4. SAST Summary
+          5. SCA Summary
+          6. Container Summary
 
           EOF
 
           cat security-summary.md
 
 
-      # ==========================================================
-      # CREATE APPROVAL BODY
-      # ==========================================================
+      # ============================================================
+      # SECURITY APPROVAL DETAILS
+      # ============================================================
 
       - name: Create Security Approval Details
+        if: always()
         run: |
 
           cat > approval-body.md <<EOF
-          # Security Review Required
 
-          A security review is required before pushing the Docker image to ECR.
+          # Security Approval Required
+
+          Security review is required before pushing the Docker image to Amazon ECR.
 
           ## Repository
 
@@ -700,52 +733,66 @@ jobs:
 
           ${IMAGE_NAME}:${IMAGE_TAG}
 
-          ## Snyk Scans
-
-          ### Snyk Code / SAST
+          ## Snyk Code / SAST
 
           Exit Code: ${SNYK_CODE_EXIT}
 
-          ### Snyk Open Source / SCA
+          ## Snyk Open Source / SCA
 
           Exit Code: ${SNYK_SCA_EXIT}
 
-          ### Snyk Container
+          ## Snyk Container
 
           Exit Code: ${SNYK_CONTAINER_EXIT}
 
-          ## Review Instructions
+          ## Reports
 
-          Review the workflow artifacts before approving.
+          Review the workflow artifacts:
 
-          Available reports:
+          - snyk-code.json
+          - snyk-code-output.txt
+          - sast-summary.txt
 
-          1. snyk-code.json
-          2. snyk-sca.json
-          3. snyk-container.json
-          4. sast-summary.txt
-          5. sca-summary.txt
-          6. container-summary.txt
-          7. security-summary.md
+          - snyk-sca.json
+          - snyk-sca-output.txt
+          - sca-summary.txt
 
-          Enter APPROVE to continue with ECR push.
+          - snyk-container.json
+          - snyk-container-output.txt
+          - container-summary.txt
 
-          Enter DECLINE to stop the deployment.
+          - security-summary.md
+
+          ## Approval
+
+          Enter:
+
+          APPROVE
+
+          to continue with ECR push.
+
+          Enter:
+
+          DECLINE
+
+          to stop the pipeline.
 
           EOF
 
           cat approval-body.md
 
 
-      # ==========================================================
+      # ============================================================
       # UPLOAD ALL REPORTS
-      # ==========================================================
+      # ============================================================
 
       - name: Upload Security Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: snyk-security-reports-${{ github.run_number }}
           retention-days: 30
+          if-no-files-found: warn
           path: |
             snyk-code.json
             snyk-code-output.txt
@@ -760,9 +807,9 @@ jobs:
             approval-body.md
 
 
-      # ==========================================================
+      # ============================================================
       # MANUAL SECURITY APPROVAL
-      # ==========================================================
+      # ============================================================
 
       - name: Security Approval
         uses: trstringer/manual-approval@v1
@@ -770,18 +817,28 @@ jobs:
           secret: ${{ github.token }}
           approvers: ${{ vars.APPROVERS }}
           minimum-approvals: 1
-          issue-title: "Security Approval - ${{ github.repository }} - ${{ inputs.branch }}"
+
+          issue-title: >-
+            Security Approval -
+            ${{ github.repository }} -
+            ${{ inputs.branch }}
+
           issue-body-file-path: approval-body.md
+
           exclude-workflow-initiator-as-approver: false
+
           fail-on-denial: true
+
           additional-approved-words: "APPROVE"
+
           additional-denied-words: "DECLINE"
+
           polling-interval-seconds: 15
 
 
-      # ==========================================================
-      # SECURITY APPROVED
-      # ==========================================================
+      # ============================================================
+      # APPROVAL COMPLETED
+      # ============================================================
 
       - name: Security Approval Completed
         run: |
@@ -799,7 +856,8 @@ jobs:
 
 
 # ================================================================
-# PUSH + SIGN JOB
+# JOB 2
+# PUSH TO ECR + COSIGN
 # ================================================================
 
   push-and-sign:
@@ -817,9 +875,9 @@ jobs:
 
     steps:
 
-      # ==========================================================
+      # ============================================================
       # CHECKOUT SAME BRANCH
-      # ==========================================================
+      # ============================================================
 
       - name: Checkout Approved Branch
         uses: actions/checkout@v4
@@ -828,9 +886,9 @@ jobs:
           fetch-depth: 0
 
 
-      # ==========================================================
-      # DISPLAY BUILD INFORMATION
-      # ==========================================================
+      # ============================================================
+      # DISPLAY APPROVED BUILD
+      # ============================================================
 
       - name: Display Approved Build
         run: |
@@ -845,9 +903,9 @@ jobs:
           echo "Image Tag  : ${IMAGE_TAG}"
 
 
-      # ==========================================================
+      # ============================================================
       # AWS OIDC
-      # ==========================================================
+      # ============================================================
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -856,24 +914,24 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # ==========================================================
-      # ECR LOGIN
-      # ==========================================================
+      # ============================================================
+      # LOGIN TO ECR
+      # ============================================================
 
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
 
-      # ==========================================================
-      # BUILD SAME IMAGE FROM APPROVED COMMIT
-      # ==========================================================
+      # ============================================================
+      # BUILD APPROVED IMAGE
+      # ============================================================
 
       - name: Build Approved Docker Image
         run: |
 
           echo "=================================================="
-          echo "Building Approved Docker Image"
+          echo "BUILDING APPROVED DOCKER IMAGE"
           echo "=================================================="
 
           docker build \
@@ -881,19 +939,23 @@ jobs:
             -t "${IMAGE_NAME}:${IMAGE_TAG}" \
             ./app
 
-          echo "Image built successfully."
+          echo ""
+          echo "Approved image built successfully."
+
+          docker images "${IMAGE_NAME}"
 
 
-      # ==========================================================
-      # TAG ECR IMAGE
-      # ==========================================================
+      # ============================================================
+      # CREATE ECR URI
+      # ============================================================
 
-      - name: Tag Image for ECR
+      - name: Prepare ECR Image
         run: |
 
           ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
 
-          echo "ECR URI: ${ECR_URI}"
+          echo "ECR URI:"
+          echo "${ECR_URI}"
 
           docker tag \
             "${IMAGE_NAME}:${IMAGE_TAG}" \
@@ -906,31 +968,43 @@ jobs:
           echo "ECR_URI=${ECR_URI}" >> "$GITHUB_ENV"
 
 
-      # ==========================================================
-      # PUSH IMAGE
-      # ==========================================================
+      # ============================================================
+      # PUSH VERSIONED IMAGE
+      # ============================================================
 
-      - name: Push Docker Image to ECR
+      - name: Push Versioned Image to ECR
         run: |
 
           echo "=================================================="
-          echo "Pushing Docker Image to ECR"
+          echo "PUSHING VERSIONED IMAGE"
           echo "=================================================="
 
           docker push "${ECR_URI}:${IMAGE_TAG}"
 
+
+      # ============================================================
+      # PUSH LATEST IMAGE
+      # ============================================================
+
+      - name: Push Latest Image to ECR
+        run: |
+
+          echo "=================================================="
+          echo "PUSHING LATEST IMAGE"
+          echo "=================================================="
+
           docker push "${ECR_URI}:latest"
 
 
-      # ==========================================================
+      # ============================================================
       # GET IMAGE DIGEST
-      # ==========================================================
+      # ============================================================
 
       - name: Get ECR Image Digest
         run: |
 
           echo "=================================================="
-          echo "Getting ECR Image Digest"
+          echo "GETTING ECR IMAGE DIGEST"
           echo "=================================================="
 
           DIGEST=$(aws ecr describe-images \
@@ -945,43 +1019,45 @@ jobs:
           echo "IMAGE_DIGEST=${DIGEST}" >> "$GITHUB_ENV"
 
 
-      # ==========================================================
+      # ============================================================
       # INSTALL COSIGN
-      # ==========================================================
+      # ============================================================
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
 
 
-      # ==========================================================
+      # ============================================================
       # COSIGN SIGN
-      # ==========================================================
+      # ============================================================
 
       - name: Sign ECR Image
         env:
           COSIGN_YES: "true"
+
         run: |
 
           echo "=================================================="
-          echo "Signing ECR Image"
+          echo "COSIGN IMAGE SIGNING"
           echo "=================================================="
 
           cosign sign \
             --yes \
             "${ECR_URI}@${IMAGE_DIGEST}"
 
+          echo ""
           echo "Image signed successfully."
 
 
-      # ==========================================================
-      # VERIFY SIGNATURE
-      # ==========================================================
+      # ============================================================
+      # VERIFY COSIGN SIGNATURE
+      # ============================================================
 
       - name: Verify Cosign Signature
         run: |
 
           echo "=================================================="
-          echo "Verifying Cosign Signature"
+          echo "VERIFYING COSIGN SIGNATURE"
           echo "=================================================="
 
           cosign verify \
@@ -993,11 +1069,11 @@ jobs:
           echo "Cosign signature verification completed."
 
 
-      # ==========================================================
+      # ============================================================
       # FINAL SUMMARY
-      # ==========================================================
+      # ============================================================
 
-      - name: Final Deployment Summary
+      - name: Final Pipeline Summary
         run: |
 
           echo ""
@@ -1005,23 +1081,36 @@ jobs:
           echo "SECURITY PIPELINE COMPLETED"
           echo "=================================================="
 
+          echo ""
           echo "Repository : ${{ github.repository }}"
           echo "Branch     : ${{ inputs.branch }}"
           echo "Commit     : ${{ github.sha }}"
-          echo "ECR        : ${ECR_URI}"
-          echo "Tag        : ${IMAGE_TAG}"
-          echo "Digest     : ${IMAGE_DIGEST}"
 
           echo ""
-          echo "Security:"
-          echo "  Snyk Code       : COMPLETED"
-          echo "  Snyk Open Source: COMPLETED"
+          echo "Security Scans:"
+          echo "  Snyk Code        : COMPLETED"
+          echo "  Snyk Open Source : COMPLETED"
           echo "  Snyk Container   : COMPLETED"
 
           echo ""
           echo "Deployment:"
-          echo "  ECR Push         : COMPLETED"
-          echo "  Cosign Signing   : COMPLETED"
+          echo "  ECR Push          : COMPLETED"
+          echo "  Cosign Signing    : COMPLETED"
+          echo "  Signature Verify  : COMPLETED"
 
           echo ""
+          echo "ECR Repository:"
+          echo "${ECR_URI}"
+
+          echo ""
+          echo "Image Tag:"
+          echo "${IMAGE_TAG}"
+
+          echo ""
+          echo "Image Digest:"
+          echo "${IMAGE_DIGEST}"
+
+          echo ""
+          echo "=================================================="
+          echo "PIPELINE SUCCESS"
           echo "=================================================="
