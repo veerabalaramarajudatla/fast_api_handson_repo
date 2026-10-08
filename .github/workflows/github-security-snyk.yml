@@ -1,0 +1,1298 @@
+name: GitHub Security - Snyk 3-Layer Scan
+
+on:
+
+  workflow_dispatch:
+
+    inputs:
+
+      branch:
+        description: "Git branch to scan"
+        required: true
+        type: string
+        default: "poc-p1"
+
+
+      # ==========================================================
+      # SAST
+      # ==========================================================
+
+      sast_severity_mode:
+        description: "SAST severity mode"
+        required: true
+        type: choice
+        options:
+          - ALL
+          - SELECTIVE
+        default: ALL
+
+      sast_high:
+        description: "SAST - Check HIGH"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_high:
+        description: "SAST - Maximum HIGH vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sast_medium:
+        description: "SAST - Check MEDIUM"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_medium:
+        description: "SAST - Maximum MEDIUM vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sast_low:
+        description: "SAST - Check LOW"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_low:
+        description: "SAST - Maximum LOW vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+
+      # ==========================================================
+      # SCA
+      # ==========================================================
+
+      sca_severity_mode:
+        description: "SCA severity mode"
+        required: true
+        type: choice
+        options:
+          - ALL
+          - SELECTIVE
+        default: ALL
+
+      sca_critical:
+        description: "SCA - Check CRITICAL"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_critical:
+        description: "SCA - Maximum CRITICAL vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sca_high:
+        description: "SCA - Check HIGH"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_high:
+        description: "SCA - Maximum HIGH vulnerabilities"
+        required: true
+        type: number
+        default: 5
+
+      sca_medium:
+        description: "SCA - Check MEDIUM"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_medium:
+        description: "SCA - Maximum MEDIUM vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      sca_low:
+        description: "SCA - Check LOW"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_low:
+        description: "SCA - Maximum LOW vulnerabilities"
+        required: true
+        type: number
+        default: 20
+
+
+      # ==========================================================
+      # CONTAINER
+      # ==========================================================
+
+      container_severity_mode:
+        description: "Container severity mode"
+        required: true
+        type: choice
+        options:
+          - ALL
+          - SELECTIVE
+        default: ALL
+
+      container_critical:
+        description: "Container - Check CRITICAL"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_critical:
+        description: "Container - Maximum CRITICAL vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      container_high:
+        description: "Container - Check HIGH"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_high:
+        description: "Container - Maximum HIGH vulnerabilities"
+        required: true
+        type: number
+        default: 5
+
+      container_medium:
+        description: "Container - Check MEDIUM"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_medium:
+        description: "Container - Maximum MEDIUM vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      container_low:
+        description: "Container - Check LOW"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_low:
+        description: "Container - Maximum LOW vulnerabilities"
+        required: true
+        type: number
+        default: 20
+
+
+permissions:
+
+  contents: read
+  issues: write
+  id-token: write
+
+
+env:
+
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+  SNYK_ORG_ID: ${{ vars.SNYK_ORG_ID }}
+
+  APPROVERS: ${{ vars.APPROVERS }}
+
+
+jobs:
+
+
+  # ================================================================
+  # SECURITY SCAN
+  # ================================================================
+
+  security-scan:
+
+    name: Snyk 3-Layer Security Scan
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+
+      # ============================================================
+      # CHECKOUT SELECTED BRANCH
+      # ============================================================
+
+      - name: Checkout selected branch
+
+        uses: actions/checkout@v4
+
+        with:
+          ref: ${{ inputs.branch }}
+
+
+      # ============================================================
+      # PYTHON
+      # ============================================================
+
+      - name: Setup Python
+
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.12"
+
+
+      # ============================================================
+      # INSTALL APPLICATION DEPENDENCIES
+      # ============================================================
+
+      - name: Install Python dependencies
+
+        working-directory: ./app
+
+        run: |
+
+          python -m pip install --upgrade pip
+
+          python -m pip install -r requirements.txt
+
+
+      # ============================================================
+      # SNYK CLI
+      # ============================================================
+
+      - name: Setup Snyk CLI
+
+        uses: snyk/actions/setup@master
+
+
+      - name: Verify Snyk CLI
+
+        run: |
+
+          snyk --version
+
+          echo "Snyk CLI ready."
+
+
+      # ============================================================
+      # 1. SNYK CODE - SAST
+      # ============================================================
+
+      - name: 1 - Snyk Code SAST
+
+        id: sast
+
+        continue-on-error: true
+
+        env:
+
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        run: |
+
+          set +e
+
+          echo "=========================================="
+          echo "1. SNYK CODE - SAST"
+          echo "=========================================="
+
+          snyk code test \
+            --org="${SNYK_ORG_ID}" \
+            --json-file-output=snyk-code.json \
+            > snyk-code-output.txt 2>&1
+
+          EXIT_CODE=$?
+
+          cat snyk-code-output.txt
+
+          echo ""
+          echo "Snyk Code Exit Code: ${EXIT_CODE}"
+
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          exit 0
+
+
+      # ============================================================
+      # 2. SAST EVALUATION
+      # ============================================================
+
+      - name: Evaluate SAST
+
+        env:
+
+          SAST_MODE: ${{ inputs.sast_severity_mode }}
+
+          SAST_HIGH: ${{ inputs.sast_high }}
+          SAST_MAX_HIGH: ${{ inputs.sast_max_high }}
+
+          SAST_MEDIUM: ${{ inputs.sast_medium }}
+          SAST_MAX_MEDIUM: ${{ inputs.sast_max_medium }}
+
+          SAST_LOW: ${{ inputs.sast_low }}
+          SAST_MAX_LOW: ${{ inputs.sast_max_low }}
+
+        run: |
+
+          python <<'PY'
+
+          import json
+          import os
+          import sys
+
+          file_name = "snyk-code.json"
+
+          if not os.path.exists(file_name):
+
+              print("Snyk Code JSON was not generated.")
+
+              # If Snyk reports zero issues, this can happen.
+              output = {}
+
+              with open("snyk-code-output.txt") as f:
+                  output = f.read()
+
+              if "Total issues:" in output and "0" in output:
+                  print("SAST: 0 issues.")
+                  sys.exit(0)
+
+              sys.exit(1)
+
+
+          data = json.load(
+              open(file_name)
+          )
+
+          counts = {
+              "high": 0,
+              "medium": 0,
+              "low": 0
+          }
+
+
+          def scan(value):
+
+              if isinstance(value, dict):
+
+                  severity = str(
+                      value.get("severity", "")
+                  ).lower()
+
+                  if severity in counts:
+                      counts[severity] += 1
+
+                  level = str(
+                      value.get("level", "")
+                  ).lower()
+
+                  if level == "error":
+                      counts["high"] += 1
+
+                  elif level == "warning":
+                      counts["medium"] += 1
+
+                  elif level == "note":
+                      counts["low"] += 1
+
+                  for item in value.values():
+                      scan(item)
+
+
+              elif isinstance(value, list):
+
+                  for item in value:
+                      scan(item)
+
+
+          scan(data)
+
+
+          print("")
+          print("SAST SUMMARY")
+          print("============")
+
+          for key in counts:
+              print(
+                  f"{key.upper():10}: "
+                  f"{counts[key]}"
+              )
+
+
+          mode = os.environ["SAST_MODE"]
+
+          selected = {
+
+              "high":
+                  os.environ["SAST_HIGH"].lower()
+                  == "true",
+
+              "medium":
+                  os.environ["SAST_MEDIUM"].lower()
+                  == "true",
+
+              "low":
+                  os.environ["SAST_LOW"].lower()
+                  == "true"
+          }
+
+
+          limits = {
+
+              "high":
+                  int(
+                      os.environ["SAST_MAX_HIGH"]
+                  ),
+
+              "medium":
+                  int(
+                      os.environ["SAST_MAX_MEDIUM"]
+                  ),
+
+              "low":
+                  int(
+                      os.environ["SAST_MAX_LOW"]
+                  )
+          }
+
+
+          failed = False
+
+
+          for severity in counts:
+
+              if mode == "SELECTIVE" and not selected[severity]:
+                  continue
+
+              if counts[severity] > limits[severity]:
+
+                  print(
+                      f"SAST FAILED: "
+                      f"{severity.upper()} "
+                      f"{counts[severity]} > "
+                      f"{limits[severity]}"
+                  )
+
+                  failed = True
+
+
+          if failed:
+
+              print("")
+              print("SAST QUALITY GATE: FAILED")
+
+              sys.exit(1)
+
+
+          print("")
+          print("SAST QUALITY GATE: PASSED")
+
+          PY
+
+
+      # ============================================================
+      # 3. SNYK OPEN SOURCE - SCA
+      # ============================================================
+
+      - name: 2 - Snyk Open Source SCA
+
+        id: sca
+
+        continue-on-error: true
+
+        env:
+
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        working-directory: ./app
+
+        run: |
+
+          set +e
+
+          echo "=========================================="
+          echo "2. SNYK OPEN SOURCE - SCA"
+          echo "=========================================="
+
+          snyk test \
+            --file=requirements.txt \
+            --package-manager=pip \
+            --command=python \
+            --org="${SNYK_ORG_ID}" \
+            --json-file-output=../snyk-sca.json \
+            > ../snyk-sca-output.txt 2>&1
+
+          EXIT_CODE=$?
+
+          cat ../snyk-sca-output.txt
+
+          echo ""
+          echo "Snyk SCA Exit Code: ${EXIT_CODE}"
+
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          exit 0
+
+
+      # ============================================================
+      # 4. SCA EVALUATION
+      # ============================================================
+
+      - name: Evaluate SCA
+
+        env:
+
+          SCA_MODE: ${{ inputs.sca_severity_mode }}
+
+          CRITICAL_ENABLED: ${{ inputs.sca_critical }}
+          CRITICAL_LIMIT: ${{ inputs.sca_max_critical }}
+
+          HIGH_ENABLED: ${{ inputs.sca_high }}
+          HIGH_LIMIT: ${{ inputs.sca_max_high }}
+
+          MEDIUM_ENABLED: ${{ inputs.sca_medium }}
+          MEDIUM_LIMIT: ${{ inputs.sca_max_medium }}
+
+          LOW_ENABLED: ${{ inputs.sca_low }}
+          LOW_LIMIT: ${{ inputs.sca_max_low }}
+
+        run: |
+
+          python <<'PY'
+
+          import json
+          import os
+          import sys
+
+          with open("snyk-sca.json") as f:
+              data = json.load(f)
+
+
+          vulnerabilities = data.get(
+              "vulnerabilities",
+              []
+          )
+
+
+          counts = {
+
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+          }
+
+
+          for item in vulnerabilities:
+
+              severity = str(
+                  item.get("severity", "")
+              ).lower()
+
+              if severity in counts:
+                  counts[severity] += 1
+
+
+          print("")
+          print("SCA SUMMARY")
+          print("===========")
+
+          for key in counts:
+
+              print(
+                  f"{key.upper():10}: "
+                  f"{counts[key]}"
+              )
+
+
+          mode = os.environ["SCA_MODE"]
+
+
+          enabled = {
+
+              "critical":
+                  os.environ["CRITICAL_ENABLED"].lower()
+                  == "true",
+
+              "high":
+                  os.environ["HIGH_ENABLED"].lower()
+                  == "true",
+
+              "medium":
+                  os.environ["MEDIUM_ENABLED"].lower()
+                  == "true",
+
+              "low":
+                  os.environ["LOW_ENABLED"].lower()
+                  == "true"
+          }
+
+
+          limits = {
+
+              "critical":
+                  int(
+                      os.environ["CRITICAL_LIMIT"]
+                  ),
+
+              "high":
+                  int(
+                      os.environ["HIGH_LIMIT"]
+                  ),
+
+              "medium":
+                  int(
+                      os.environ["MEDIUM_LIMIT"]
+                  ),
+
+              "low":
+                  int(
+                      os.environ["LOW_LIMIT"]
+                  )
+          }
+
+
+          failed = False
+
+
+          for severity in counts:
+
+              if mode == "SELECTIVE" and not enabled[severity]:
+                  continue
+
+              if counts[severity] > limits[severity]:
+
+                  print(
+                      f"SCA FAILED: "
+                      f"{severity.upper()} "
+                      f"{counts[severity]} > "
+                      f"{limits[severity]}"
+                  )
+
+                  failed = True
+
+
+          if failed:
+
+              print("")
+              print("SCA QUALITY GATE: FAILED")
+
+              sys.exit(1)
+
+
+          print("")
+          print("SCA QUALITY GATE: PASSED")
+
+          PY
+
+
+      # ============================================================
+      # 5. DOCKER BUILD
+      # ============================================================
+
+      - name: Build Docker image
+
+        run: |
+
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}"
+
+          SHORT_SHA="${GITHUB_SHA::12}"
+
+          SAFE_BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+
+          IMAGE_TAG="${SAFE_BRANCH}-${SHORT_SHA}"
+
+          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+          docker build \
+            -f app/Dockerfile \
+            -t "${IMAGE_URI}:${IMAGE_TAG}" \
+            ./app
+
+
+      # ============================================================
+      # 6. SNYK CONTAINER
+      # ============================================================
+
+      - name: 3 - Snyk Container Scan
+
+        id: container
+
+        continue-on-error: true
+
+        env:
+
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        run: |
+
+          set +e
+
+          echo "=========================================="
+          echo "3. SNYK CONTAINER"
+          echo "=========================================="
+
+          snyk container test \
+            "${IMAGE_URI}:${IMAGE_TAG}" \
+            --org="${SNYK_ORG_ID}" \
+            --json-file-output=snyk-container.json \
+            > snyk-container-output.txt 2>&1
+
+          EXIT_CODE=$?
+
+          cat snyk-container-output.txt
+
+          echo ""
+          echo "Snyk Container Exit Code: ${EXIT_CODE}"
+
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          exit 0
+
+
+      # ============================================================
+      # 7. CONTAINER EVALUATION
+      # ============================================================
+
+      - name: Evaluate Container
+
+        env:
+
+          MODE: ${{ inputs.container_severity_mode }}
+
+          CRITICAL_ENABLED: ${{ inputs.container_critical }}
+          CRITICAL_LIMIT: ${{ inputs.container_max_critical }}
+
+          HIGH_ENABLED: ${{ inputs.container_high }}
+          HIGH_LIMIT: ${{ inputs.container_max_high }}
+
+          MEDIUM_ENABLED: ${{ inputs.container_medium }}
+          MEDIUM_LIMIT: ${{ inputs.container_max_medium }}
+
+          LOW_ENABLED: ${{ inputs.container_low }}
+          LOW_LIMIT: ${{ inputs.container_max_low }}
+
+        run: |
+
+          python <<'PY'
+
+          import json
+          import os
+          import sys
+
+          with open("snyk-container.json") as f:
+              data = json.load(f)
+
+
+          vulnerabilities = data.get(
+              "vulnerabilities",
+              []
+          )
+
+
+          counts = {
+
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+          }
+
+
+          for item in vulnerabilities:
+
+              severity = str(
+                  item.get("severity", "")
+              ).lower()
+
+              if severity in counts:
+                  counts[severity] += 1
+
+
+          print("")
+          print("CONTAINER SUMMARY")
+          print("=================")
+
+          for key in counts:
+
+              print(
+                  f"{key.upper():10}: "
+                  f"{counts[key]}"
+              )
+
+
+          enabled = {
+
+              "critical":
+                  os.environ["CRITICAL_ENABLED"].lower()
+                  == "true",
+
+              "high":
+                  os.environ["HIGH_ENABLED"].lower()
+                  == "true",
+
+              "medium":
+                  os.environ["MEDIUM_ENABLED"].lower()
+                  == "true",
+
+              "low":
+                  os.environ["LOW_ENABLED"].lower()
+                  == "true"
+          }
+
+
+          limits = {
+
+              "critical":
+                  int(
+                      os.environ["CRITICAL_LIMIT"]
+                  ),
+
+              "high":
+                  int(
+                      os.environ["HIGH_LIMIT"]
+                  ),
+
+              "medium":
+                  int(
+                      os.environ["MEDIUM_LIMIT"]
+                  ),
+
+              "low":
+                  int(
+                      os.environ["LOW_LIMIT"]
+                  )
+          }
+
+
+          failed = False
+
+
+          for severity in counts:
+
+              if (
+                  os.environ["MODE"] == "SELECTIVE"
+                  and not enabled[severity]
+              ):
+                  continue
+
+
+              if counts[severity] > limits[severity]:
+
+                  print(
+                      f"CONTAINER FAILED: "
+                      f"{severity.upper()} "
+                      f"{counts[severity]} > "
+                      f"{limits[severity]}"
+                  )
+
+                  failed = True
+
+
+          if failed:
+
+              print("")
+              print("CONTAINER QUALITY GATE: FAILED")
+
+              sys.exit(1)
+
+
+          print("")
+          print("CONTAINER QUALITY GATE: PASSED")
+
+          PY
+
+
+      # ============================================================
+      # 8. SECURITY REPORT SUMMARY
+      # ============================================================
+
+      - name: Generate security summary
+
+        if: always()
+
+        run: |
+
+          cat > security-summary.txt <<EOF
+
+          SNYK 3-LAYER SECURITY SUMMARY
+
+          Repository:
+          ${GITHUB_REPOSITORY}
+
+          Branch:
+          ${GITHUB_REF_NAME}
+
+          Commit:
+          ${GITHUB_SHA}
+
+
+          ==========================================
+
+          1. SNYK CODE / SAST
+
+          ==========================================
+
+          $(cat snyk-code-output.txt 2>/dev/null || true)
+
+
+          ==========================================
+
+          2. SNYK OPEN SOURCE / SCA
+
+          ==========================================
+
+          $(cat snyk-sca-output.txt 2>/dev/null || true)
+
+
+          ==========================================
+
+          3. SNYK CONTAINER
+
+          ==========================================
+
+          $(cat snyk-container-output.txt 2>/dev/null || true)
+
+          EOF
+
+
+      # ============================================================
+      # 9. UPLOAD REPORTS
+      # ============================================================
+
+      - name: Upload Snyk security reports
+
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: snyk-3-layer-security-report
+
+          path: |
+
+            snyk-code.json
+            snyk-code-output.txt
+
+            snyk-sca.json
+            snyk-sca-output.txt
+
+            snyk-container.json
+            snyk-container-output.txt
+
+            security-summary.txt
+
+          retention-days: 30
+
+
+      # ============================================================
+      # 10. MANUAL APPROVAL
+      # ============================================================
+
+      - name: Prepare approval request
+
+        if: success()
+
+        run: |
+
+          cat > approval-body.md <<EOF
+
+          # 🔐 Snyk 3-Layer Security Approval
+
+          ## Build
+
+          | Item | Value |
+          |---|---|
+          | Repository | ${GITHUB_REPOSITORY} |
+          | Branch | ${GITHUB_REF_NAME} |
+          | Commit | ${GITHUB_SHA} |
+          | Workflow | ${GITHUB_WORKFLOW} |
+          | Run | ${GITHUB_RUN_ID} |
+
+          ## Security Scans
+
+          ### 1. Snyk Code
+
+          SAST source-code security analysis.
+
+          ### 2. Snyk Open Source
+
+          SCA dependency vulnerability analysis.
+
+          ### 3. Snyk Container
+
+          Docker image vulnerability analysis.
+
+          ## Reports
+
+          Open the workflow:
+
+          ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Download artifact:
+
+          **snyk-3-layer-security-report**
+
+          ## Approval
+
+          Reply:
+
+          APPROVE
+
+          to continue.
+
+          Reply:
+
+          DECLINE
+
+          to stop the pipeline.
+
+          ## After Approval
+
+          Docker Image
+
+          ↓
+
+          ECR Push
+
+          ↓
+
+          Cosign Sign
+
+          EOF
+
+
+      - name: Wait for security approval
+
+        if: success()
+
+        uses: trstringer/manual-approval@v1
+
+        timeout-minutes: 360
+
+        with:
+
+          secret: ${{ github.token }}
+
+          approvers: ${{ env.APPROVERS }}
+
+          minimum-approvals: 1
+
+          issue-title: >
+            🔐 Snyk 3-Layer Security Approval -
+            ${{ github.repository }} -
+            ${{ inputs.branch }}
+
+          issue-body-file-path: approval-body.md
+
+          exclude-workflow-initiator-as-approver: false
+
+          fail-on-denial: true
+
+          additional-approved-words: "APPROVE"
+
+          additional-denied-words: "DECLINE"
+
+          polling-interval-seconds: 15
+
+
+  # ================================================================
+  # BUILD / PUSH / SIGN
+  # ================================================================
+
+  build-push-sign:
+
+    name: Build Push and Sign Approved Image
+
+    needs: security-scan
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+
+      # ============================================================
+      # CHECKOUT SAME COMMIT
+      # ============================================================
+
+      - name: Checkout scanned branch
+
+        uses: actions/checkout@v4
+
+        with:
+
+          ref: ${{ inputs.branch }}
+
+
+      # ============================================================
+      # AWS
+      # ============================================================
+
+      - name: Configure AWS credentials
+
+        uses: aws-actions/configure-aws-credentials@v6
+
+        with:
+
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+          aws-region: ${{ env.AWS_REGION }}
+
+          role-session-name: GitHubActionsSnykSecurity
+
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+
+
+      - name: Verify AWS identity
+
+        run: |
+
+          aws sts get-caller-identity
+
+
+      # ============================================================
+      # ECR LOGIN
+      # ============================================================
+
+      - name: Login to Amazon ECR
+
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ============================================================
+      # IMAGE
+      # ============================================================
+
+      - name: Generate image information
+
+        id: image
+
+        run: |
+
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}"
+
+          SHORT_SHA="${GITHUB_SHA::12}"
+
+          SAFE_BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+
+          IMAGE_TAG="${SAFE_BRANCH}-${SHORT_SHA}"
+
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+
+      # ============================================================
+      # DOCKER BUILD
+      # ============================================================
+
+      - name: Build approved Docker image
+
+        run: |
+
+          docker build \
+            -f app/Dockerfile \
+            -t "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}" \
+            ./app
+
+
+      # ============================================================
+      # PUSH
+      # ============================================================
+
+      - name: Push approved image to ECR
+
+        run: |
+
+          docker push \
+            "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}"
+
+
+      # ============================================================
+      # COSIGN
+      # ============================================================
+
+      - name: Install Cosign
+
+        uses: sigstore/cosign-installer@v3
+
+
+      - name: Sign approved image
+
+        env:
+
+          COSIGN_YES: "true"
+
+        run: |
+
+          cosign sign \
+            "${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.image_tag }}"
+
+
+      # ============================================================
+      # DIGEST
+      # ============================================================
+
+      - name: Get ECR digest
+
+        id: digest
+
+        run: |
+
+          DIGEST=$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${{ steps.image.outputs.image_tag }}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "=========================================="
+          echo "SECURE IMAGE PUBLISHED"
+          echo "=========================================="
+
+          echo "Repository:"
+          echo "${{ steps.image.outputs.image_uri }}"
+
+          echo ""
+
+          echo "Tag:"
+          echo "${{ steps.image.outputs.image_tag }}"
+
+          echo ""
+
+          echo "Digest:"
+          echo "${DIGEST}"
+
+          echo ""
+
+          echo "Security:"
+          echo "Snyk Code       = SCANNED"
+          echo "Snyk Open Source = SCANNED"
+          echo "Snyk Container   = SCANNED"
+
+          echo ""
+
+          echo "Approval:"
+          echo "APPROVED"
+
+          echo ""
+
+          echo "Cosign:"
+          echo "SIGNED"
+
+          echo "=========================================="
