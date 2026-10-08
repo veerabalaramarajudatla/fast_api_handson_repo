@@ -1,0 +1,1380 @@
+name: GitHub Security -Layer Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      # ============================================================
+      # BRANCH
+      # ============================================================
+
+      branch:
+        description: "GitHub branch to scan"
+        required: true
+        type: string
+
+
+      # ============================================================
+      # SAST
+      # ============================================================
+
+      sast_high:
+        description: "Check SAST High vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_high:
+        description: "Maximum allowed SAST High vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      sast_medium:
+        description: "Check SAST Medium vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_medium:
+        description: "Maximum allowed SAST Medium vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      sast_low:
+        description: "Check SAST Low vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sast_max_low:
+        description: "Maximum allowed SAST Low vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+
+      # ============================================================
+      # SCA
+      # ============================================================
+
+      sca_critical:
+        description: "Check SCA Critical vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_critical:
+        description: "Maximum allowed SCA Critical vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sca_high:
+        description: "Check SCA High vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_high:
+        description: "Maximum allowed SCA High vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sca_medium:
+        description: "Check SCA Medium vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_medium:
+        description: "Maximum allowed SCA Medium vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      sca_low:
+        description: "Check SCA Low vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      sca_max_low:
+        description: "Maximum allowed SCA Low vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+
+      # ============================================================
+      # CONTAINER
+      # ============================================================
+
+      container_critical:
+        description: "Check Container Critical vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_critical:
+        description: "Maximum allowed Container Critical vulnerabilities"
+        required: true
+        type: number
+        default: 0
+
+      container_high:
+        description: "Check Container High vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_high:
+        description: "Maximum allowed Container High vulnerabilities"
+        required: true
+        type: number
+        default: 5
+
+      container_medium:
+        description: "Check Container Medium vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_medium:
+        description: "Maximum allowed Container Medium vulnerabilities"
+        required: true
+        type: number
+        default: 10
+
+      container_low:
+        description: "Check Container Low vulnerabilities"
+        required: true
+        type: boolean
+        default: true
+
+      container_max_low:
+        description: "Maximum allowed Container Low vulnerabilities"
+        required: true
+        type: number
+        default: 20
+
+
+# ================================================================
+# GLOBAL VARIABLES
+# ================================================================
+
+env:
+
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+  SNYK_ORG_ID: ${{ vars.SNYK_ORG_ID }}
+
+  IMAGE_NAME: ${{ vars.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
+
+
+# ================================================================
+# SECURITY SCAN JOB
+# ================================================================
+
+jobs:
+
+  security-scan:
+
+    name: Snyk Security Scan
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+
+      # ==========================================================
+      # CHECKOUT SELECTED BRANCH
+      # ==========================================================
+
+      - name: Checkout Selected Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+
+      # ==========================================================
+      # BUILD INFORMATION
+      # ==========================================================
+
+      - name: Display Build Information
+        run: |
+
+          echo "=================================================="
+          echo "GITHUB SECURITY PIPELINE"
+          echo "=================================================="
+
+          echo "Repository : ${{ github.repository }}"
+          echo "Branch     : ${{ inputs.branch }}"
+          echo "Commit     : ${{ github.sha }}"
+          echo "Actor      : ${{ github.actor }}"
+          echo "Run        : ${{ github.run_number }}"
+
+          echo "=================================================="
+
+
+      # ==========================================================
+      # PYTHON
+      # ==========================================================
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      # ==========================================================
+      # INSTALL REQUIREMENTS
+      # ==========================================================
+
+      - name: Install Python Dependencies
+        working-directory: ./app
+        run: |
+
+          python -m pip install --upgrade pip
+
+          python -m pip install -r requirements.txt
+
+
+      # ==========================================================
+      # INSTALL SNYK
+      # ==========================================================
+
+      - name: Install Snyk CLI
+        run: |
+
+          npm install -g snyk
+
+          snyk --version
+
+
+      # ==========================================================
+      # 1. SNYK CODE / SAST
+      # ==========================================================
+
+      - name: Run Snyk Code - SAST
+        id: snyk_code
+        continue-on-error: true
+
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "1. SNYK CODE / SAST"
+          echo "=================================================="
+
+          rm -f snyk-code.json
+          rm -f snyk-code-output.txt
+
+          set +e
+
+          snyk code test \
+            --org="${SNYK_ORG_ID}" \
+            --json-file-output=snyk-code.json \
+            > snyk-code-output.txt 2>&1
+
+          SNYK_CODE_EXIT=$?
+
+          echo "SNYK_CODE_EXIT=${SNYK_CODE_EXIT}" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Snyk Code Exit Code: ${SNYK_CODE_EXIT}"
+
+          cat snyk-code-output.txt || true
+
+          if [ -s snyk-code.json ]; then
+            echo ""
+            echo "Snyk Code JSON generated."
+          else
+            echo ""
+            echo "Snyk Code JSON was not generated."
+          fi
+
+          exit 0
+
+
+      # ==========================================================
+      # SAST SUMMARY
+      # ==========================================================
+
+      - name: Generate SAST Summary
+        if: always()
+        run: |
+
+          {
+            echo "=================================================="
+            echo "SNYK CODE / SAST"
+            echo "=================================================="
+            echo ""
+            echo "Repository: ${{ github.repository }}"
+            echo "Branch: ${{ inputs.branch }}"
+            echo "Commit: ${{ github.sha }}"
+            echo ""
+            echo "Exit Code: ${SNYK_CODE_EXIT}"
+            echo ""
+            echo "Thresholds:"
+            echo "High Enabled=${{ inputs.sast_high }} Max=${{ inputs.sast_max_high }}"
+            echo "Medium Enabled=${{ inputs.sast_medium }} Max=${{ inputs.sast_max_medium }}"
+            echo "Low Enabled=${{ inputs.sast_low }} Max=${{ inputs.sast_max_low }}"
+            echo ""
+            cat snyk-code-output.txt || true
+          } > sast-summary.txt
+
+
+      # ==========================================================
+      # 2. SNYK OPEN SOURCE / SCA
+      # ==========================================================
+
+      - name: Run Snyk Open Source - SCA
+        id: snyk_sca
+        continue-on-error: true
+
+        working-directory: ./app
+
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "2. SNYK OPEN SOURCE / SCA"
+          echo "=================================================="
+
+          rm -f ../snyk-sca.json
+          rm -f ../snyk-sca-output.txt
+
+          set +e
+
+          snyk test \
+            --file=requirements.txt \
+            --package-manager=pip \
+            --command=python \
+            --org="${SNYK_ORG_ID}" \
+            --json-file-output=../snyk-sca.json \
+            > ../snyk-sca-output.txt 2>&1
+
+          SNYK_SCA_EXIT=$?
+
+          echo "SNYK_SCA_EXIT=${SNYK_SCA_EXIT}" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Snyk SCA Exit Code: ${SNYK_SCA_EXIT}"
+
+          cat ../snyk-sca-output.txt || true
+
+          exit 0
+
+
+      # ==========================================================
+      # SCA SUMMARY
+      # ==========================================================
+
+      - name: Generate SCA Summary
+        if: always()
+        run: |
+
+          {
+            echo "=================================================="
+            echo "SNYK OPEN SOURCE / SCA"
+            echo "=================================================="
+            echo ""
+            echo "Repository: ${{ github.repository }}"
+            echo "Branch: ${{ inputs.branch }}"
+            echo "Commit: ${{ github.sha }}"
+            echo ""
+            echo "Exit Code: ${SNYK_SCA_EXIT}"
+            echo ""
+            echo "Thresholds:"
+            echo "Critical Enabled=${{ inputs.sca_critical }} Max=${{ inputs.sca_max_critical }}"
+            echo "High Enabled=${{ inputs.sca_high }} Max=${{ inputs.sca_max_high }}"
+            echo "Medium Enabled=${{ inputs.sca_medium }} Max=${{ inputs.sca_max_medium }}"
+            echo "Low Enabled=${{ inputs.sca_low }} Max=${{ inputs.sca_max_low }}"
+            echo ""
+            cat snyk-sca-output.txt || true
+          } > sca-summary.txt
+
+
+      # ==========================================================
+      # DOCKER BUILD
+      # ==========================================================
+
+      - name: Build Docker Image
+        run: |
+
+          echo "=================================================="
+          echo "DOCKER IMAGE BUILD"
+          echo "=================================================="
+
+          docker build \
+            -f app/Dockerfile \
+            -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+            ./app
+
+          docker images "${IMAGE_NAME}"
+
+
+      # ==========================================================
+      # 3. SNYK CONTAINER
+      # ==========================================================
+
+      - name: Run Snyk Container
+        id: snyk_container
+        continue-on-error: true
+
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "3. SNYK CONTAINER"
+          echo "=================================================="
+
+          rm -f snyk-container.json
+          rm -f snyk-container-output.txt
+
+          set +e
+
+          snyk container test \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --org="${SNYK_ORG_ID}" \
+            --file=app/Dockerfile \
+            --json-file-output=snyk-container.json \
+            > snyk-container-output.txt 2>&1
+
+          SNYK_CONTAINER_EXIT=$?
+
+          echo "SNYK_CONTAINER_EXIT=${SNYK_CONTAINER_EXIT}" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Snyk Container Exit Code: ${SNYK_CONTAINER_EXIT}"
+
+          cat snyk-container-output.txt || true
+
+          exit 0
+
+
+      # ==========================================================
+      # CONTAINER SUMMARY
+      # ==========================================================
+
+      - name: Generate Container Summary
+        if: always()
+        run: |
+
+          {
+            echo "=================================================="
+            echo "SNYK CONTAINER"
+            echo "=================================================="
+            echo ""
+            echo "Repository: ${{ github.repository }}"
+            echo "Branch: ${{ inputs.branch }}"
+            echo "Commit: ${{ github.sha }}"
+            echo ""
+            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo ""
+            echo "Exit Code: ${SNYK_CONTAINER_EXIT}"
+            echo ""
+            echo "Thresholds:"
+            echo "Critical Enabled=${{ inputs.container_critical }} Max=${{ inputs.container_max_critical }}"
+            echo "High Enabled=${{ inputs.container_high }} Max=${{ inputs.container_max_high }}"
+            echo "Medium Enabled=${{ inputs.container_medium }} Max=${{ inputs.container_max_medium }}"
+            echo "Low Enabled=${{ inputs.container_low }} Max=${{ inputs.container_max_low }}"
+            echo ""
+            cat snyk-container-output.txt || true
+          } > container-summary.txt
+
+
+      # ==========================================================
+      # GENERATE COMBINED PDF
+      # ==========================================================
+
+      - name: Generate Combined Security PDF
+        if: always()
+        run: |
+
+          echo "=================================================="
+          echo "GENERATING PDF SECURITY REPORT"
+          echo "=================================================="
+
+          python -m pip install --quiet reportlab
+
+
+          cat > generate_security_pdf.py <<'PYTHON'
+
+          import os
+
+          from reportlab.lib import colors
+          from reportlab.lib.enums import TA_CENTER
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib.styles import (
+              getSampleStyleSheet,
+              ParagraphStyle
+          )
+          from reportlab.platypus import (
+              SimpleDocTemplate,
+              Paragraph,
+              Spacer,
+              Table,
+              TableStyle,
+              PageBreak,
+              Preformatted
+          )
+
+
+          OUTPUT = "snyk-security-report.pdf"
+
+
+          def read_file(filename, limit=18000):
+
+              if not os.path.exists(filename):
+                  return "Report file was not generated."
+
+              try:
+                  with open(
+                      filename,
+                      "r",
+                      encoding="utf-8",
+                      errors="replace"
+                  ) as f:
+
+                      content = f.read()
+
+                  if not content:
+                      return "Report file is empty."
+
+                  return content[:limit]
+
+              except Exception as e:
+
+                  return f"Unable to read report: {e}"
+
+
+          styles = getSampleStyleSheet()
+
+
+          title_style = ParagraphStyle(
+              "SecurityTitle",
+              parent=styles["Title"],
+              alignment=TA_CENTER,
+              fontSize=20,
+              leading=24,
+              spaceAfter=20
+          )
+
+
+          heading_style = ParagraphStyle(
+              "SecurityHeading",
+              parent=styles["Heading1"],
+              fontSize=15,
+              leading=18,
+              spaceBefore=10,
+              spaceAfter=10
+          )
+
+
+          normal_style = ParagraphStyle(
+              "SecurityNormal",
+              parent=styles["Normal"],
+              fontSize=9,
+              leading=12
+          )
+
+
+          code_style = ParagraphStyle(
+              "SecurityCode",
+              parent=styles["Code"],
+              fontSize=6.5,
+              leading=8
+          )
+
+
+          doc = SimpleDocTemplate(
+              OUTPUT,
+              pagesize=A4,
+              rightMargin=35,
+              leftMargin=35,
+              topMargin=35,
+              bottomMargin=35
+          )
+
+
+          story = []
+
+
+          # ========================================================
+          # TITLE
+          # ========================================================
+
+          story.append(
+              Paragraph(
+                  "Snyk 3-Layer Security Report",
+                  title_style
+              )
+          )
+
+          story.append(
+              Paragraph(
+                  "GitHub Actions Security Pipeline",
+                  normal_style
+              )
+          )
+
+          story.append(Spacer(1, 20))
+
+
+          # ========================================================
+          # BUILD INFORMATION
+          # ========================================================
+
+          story.append(
+              Paragraph(
+                  "1. Build Information",
+                  heading_style
+              )
+          )
+
+
+          build_data = [
+              ["Repository", os.environ.get("GITHUB_REPOSITORY", "")],
+              ["Branch", os.environ.get("BRANCH", "")],
+              ["Commit", os.environ.get("GITHUB_SHA", "")],
+              ["Actor", os.environ.get("GITHUB_ACTOR", "")],
+              ["Run", os.environ.get("GITHUB_RUN_NUMBER", "")],
+              [
+                  "Image",
+                  f"{os.environ.get('IMAGE_NAME', '')}:"
+                  f"{os.environ.get('IMAGE_TAG', '')}"
+              ]
+          ]
+
+
+          build_table = Table(
+              build_data,
+              colWidths=[120, 390]
+          )
+
+
+          build_table.setStyle(
+              TableStyle([
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 8),
+                  ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                  ("TOPPADDING", (0, 0), (-1, -1), 6),
+                  ("BOTTOMPADDING", (0, 0), (-1, -1), 6)
+              ])
+          )
+
+
+          story.append(build_table)
+
+          story.append(Spacer(1, 20))
+
+
+          # ========================================================
+          # SAST
+          # ========================================================
+
+          story.append(
+              Paragraph(
+                  "2. Snyk Code / SAST",
+                  heading_style
+              )
+          )
+
+
+          sast_exit = os.environ.get(
+              "SNYK_CODE_EXIT",
+              "Unknown"
+          )
+
+
+          story.append(
+              Paragraph(
+                  f"<b>Exit Code:</b> {sast_exit}",
+                  normal_style
+              )
+          )
+
+
+          story.append(Spacer(1, 8))
+
+
+          sast_data = [
+              ["Severity", "Enabled", "Maximum"],
+              [
+                  "High",
+                  os.environ.get("SAST_HIGH", ""),
+                  os.environ.get("SAST_MAX_HIGH", "")
+              ],
+              [
+                  "Medium",
+                  os.environ.get("SAST_MEDIUM", ""),
+                  os.environ.get("SAST_MAX_MEDIUM", "")
+              ],
+              [
+                  "Low",
+                  os.environ.get("SAST_LOW", ""),
+                  os.environ.get("SAST_MAX_LOW", "")
+              ]
+          ]
+
+
+          sast_table = Table(
+              sast_data,
+              colWidths=[160, 160, 160]
+          )
+
+
+          sast_table.setStyle(
+              TableStyle([
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 8),
+                  ("ALIGN", (1, 0), (-1, -1), "CENTER")
+              ])
+          )
+
+
+          story.append(sast_table)
+
+          story.append(Spacer(1, 12))
+
+          story.append(
+              Paragraph(
+                  "SAST Scan Output",
+                  styles["Heading2"]
+              )
+          )
+
+
+          story.append(
+              Preformatted(
+                  read_file("snyk-code-output.txt"),
+                  code_style
+              )
+          )
+
+
+          # ========================================================
+          # SCA
+          # ========================================================
+
+          story.append(PageBreak())
+
+
+          story.append(
+              Paragraph(
+                  "3. Snyk Open Source / SCA",
+                  heading_style
+              )
+          )
+
+
+          sca_exit = os.environ.get(
+              "SNYK_SCA_EXIT",
+              "Unknown"
+          )
+
+
+          story.append(
+              Paragraph(
+                  f"<b>Exit Code:</b> {sca_exit}",
+                  normal_style
+              )
+          )
+
+
+          story.append(Spacer(1, 8))
+
+
+          sca_data = [
+              ["Severity", "Enabled", "Maximum"],
+              [
+                  "Critical",
+                  os.environ.get("SCA_CRITICAL", ""),
+                  os.environ.get("SCA_MAX_CRITICAL", "")
+              ],
+              [
+                  "High",
+                  os.environ.get("SCA_HIGH", ""),
+                  os.environ.get("SCA_MAX_HIGH", "")
+              ],
+              [
+                  "Medium",
+                  os.environ.get("SCA_MEDIUM", ""),
+                  os.environ.get("SCA_MAX_MEDIUM", "")
+              ],
+              [
+                  "Low",
+                  os.environ.get("SCA_LOW", ""),
+                  os.environ.get("SCA_MAX_LOW", "")
+              ]
+          ]
+
+
+          sca_table = Table(
+              sca_data,
+              colWidths=[160, 160, 160]
+          )
+
+
+          sca_table.setStyle(
+              TableStyle([
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 8),
+                  ("ALIGN", (1, 0), (-1, -1), "CENTER")
+              ])
+          )
+
+
+          story.append(sca_table)
+
+          story.append(Spacer(1, 12))
+
+
+          story.append(
+              Paragraph(
+                  "SCA Scan Output",
+                  styles["Heading2"]
+              )
+          )
+
+
+          story.append(
+              Preformatted(
+                  read_file("snyk-sca-output.txt"),
+                  code_style
+              )
+          )
+
+
+          # ========================================================
+          # CONTAINER
+          # ========================================================
+
+          story.append(PageBreak())
+
+
+          story.append(
+              Paragraph(
+                  "4. Snyk Container",
+                  heading_style
+              )
+          )
+
+
+          container_exit = os.environ.get(
+              "SNYK_CONTAINER_EXIT",
+              "Unknown"
+          )
+
+
+          image_name = os.environ.get(
+              "IMAGE_NAME",
+              ""
+          )
+
+          image_tag = os.environ.get(
+              "IMAGE_TAG",
+              ""
+          )
+
+
+          story.append(
+              Paragraph(
+                  f"<b>Exit Code:</b> {container_exit}",
+                  normal_style
+              )
+          )
+
+
+          story.append(
+              Paragraph(
+                  f"<b>Image:</b> {image_name}:{image_tag}",
+                  normal_style
+              )
+          )
+
+
+          story.append(Spacer(1, 8))
+
+
+          container_data = [
+              ["Severity", "Enabled", "Maximum"],
+              [
+                  "Critical",
+                  os.environ.get("CONTAINER_CRITICAL", ""),
+                  os.environ.get("CONTAINER_MAX_CRITICAL", "")
+              ],
+              [
+                  "High",
+                  os.environ.get("CONTAINER_HIGH", ""),
+                  os.environ.get("CONTAINER_MAX_HIGH", "")
+              ],
+              [
+                  "Medium",
+                  os.environ.get("CONTAINER_MEDIUM", ""),
+                  os.environ.get("CONTAINER_MAX_MEDIUM", "")
+              ],
+              [
+                  "Low",
+                  os.environ.get("CONTAINER_LOW", ""),
+                  os.environ.get("CONTAINER_MAX_LOW", "")
+              ]
+          ]
+
+
+          container_table = Table(
+              container_data,
+              colWidths=[160, 160, 160]
+          )
+
+
+          container_table.setStyle(
+              TableStyle([
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 8),
+                  ("ALIGN", (1, 0), (-1, -1), "CENTER")
+              ])
+          )
+
+
+          story.append(container_table)
+
+          story.append(Spacer(1, 12))
+
+
+          story.append(
+              Paragraph(
+                  "Container Scan Output",
+                  styles["Heading2"]
+              )
+          )
+
+
+          story.append(
+              Preformatted(
+                  read_file("snyk-container-output.txt"),
+                  code_style
+              )
+          )
+
+
+          # ========================================================
+          # SECURITY REVIEW
+          # ========================================================
+
+          story.append(PageBreak())
+
+
+          story.append(
+              Paragraph(
+                  "5. Security Review",
+                  heading_style
+              )
+          )
+
+
+          review_data = [
+              ["Security Scan", "Exit Code"],
+              ["Snyk Code / SAST", sast_exit],
+              ["Snyk Open Source / SCA", sca_exit],
+              ["Snyk Container", container_exit]
+          ]
+
+
+          review_table = Table(
+              review_data,
+              colWidths=[280, 180]
+          )
+
+
+          review_table.setStyle(
+              TableStyle([
+                  ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                  ("FONTSIZE", (0, 0), (-1, -1), 9),
+                  ("ALIGN", (1, 1), (1, -1), "CENTER")
+              ])
+          )
+
+
+          story.append(review_table)
+
+          story.append(Spacer(1, 25))
+
+
+          story.append(
+              Paragraph(
+                  "Security Reviewer: ______________________________",
+                  normal_style
+              )
+          )
+
+          story.append(Spacer(1, 15))
+
+
+          story.append(
+              Paragraph(
+                  "Decision: APPROVE / DECLINE",
+                  normal_style
+              )
+          )
+
+          story.append(Spacer(1, 15))
+
+
+          story.append(
+              Paragraph(
+                  "Date: __________________________________________",
+                  normal_style
+              )
+          )
+
+
+          doc.build(story)
+
+
+          print(f"PDF generated: {OUTPUT}")
+
+          PYTHON
+
+
+          python generate_security_pdf.py
+
+          ls -lh snyk-security-report.pdf
+
+
+      # ==========================================================
+      # UPLOAD COMPLETE REPORT
+      # ==========================================================
+
+      - name: Upload Complete Security Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-complete-security-report-${{ github.run_number }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            snyk-code.json
+            snyk-code-output.txt
+            sast-summary.txt
+
+            snyk-sca.json
+            snyk-sca-output.txt
+            sca-summary.txt
+
+            snyk-container.json
+            snyk-container-output.txt
+            container-summary.txt
+
+            snyk-security-report.pdf
+
+
+      # ==========================================================
+      # SECURITY APPROVAL
+      # ==========================================================
+
+      - name: Create Security Approval Details
+        if: always()
+        run: |
+
+          cat > approval-body.md <<EOF
+
+          # Security Approval Required
+
+          ## Repository
+
+          ${{ github.repository }}
+
+          ## Branch
+
+          ${{ inputs.branch }}
+
+          ## Commit
+
+          ${{ github.sha }}
+
+          ## Docker Image
+
+          ${IMAGE_NAME}:${IMAGE_TAG}
+
+          ## Reports
+
+          Please download and review:
+
+          - snyk-security-report.pdf
+          - snyk-code.json
+          - snyk-sca.json
+          - snyk-container.json
+          - sast-summary.txt
+          - sca-summary.txt
+          - container-summary.txt
+
+          ## Approval
+
+          APPROVE = Continue to ECR
+
+          DECLINE = Stop pipeline
+
+          EOF
+
+          cat approval-body.md
+
+
+      - name: Security Approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ vars.APPROVERS }}
+          minimum-approvals: 1
+
+          issue-title: >-
+            Security Approval -
+            ${{ github.repository }} -
+            ${{ inputs.branch }}
+
+          issue-body-file-path: approval-body.md
+
+          exclude-workflow-initiator-as-approver: false
+
+          fail-on-denial: true
+
+          additional-approved-words: "APPROVE"
+
+          additional-denied-words: "DECLINE"
+
+          polling-interval-seconds: 15
+
+
+      - name: Security Approval Completed
+        run: |
+
+          echo "=================================================="
+          echo "SECURITY APPROVAL COMPLETED"
+          echo "=================================================="
+
+          echo "Branch : ${{ inputs.branch }}"
+          echo "Commit : ${{ github.sha }}"
+
+          echo ""
+          echo "Proceeding to ECR."
+
+
+# ================================================================
+# PUSH + SIGN
+# ================================================================
+
+  push-and-sign:
+
+    name: Push Image to ECR and Sign
+
+    needs:
+      - security-scan
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      # ==========================================================
+      # CHECKOUT SAME BRANCH
+      # ==========================================================
+
+      - name: Checkout Approved Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+
+      # ==========================================================
+      # AWS OIDC
+      # ==========================================================
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ==========================================================
+      # ECR LOGIN
+      # ==========================================================
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ==========================================================
+      # BUILD SAME APPROVED COMMIT
+      # ==========================================================
+
+      - name: Build Approved Docker Image
+        run: |
+
+          docker build \
+            -f app/Dockerfile \
+            -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+            ./app
+
+
+      # ==========================================================
+      # ECR URI
+      # ==========================================================
+
+      - name: Prepare ECR Image
+        run: |
+
+          ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+
+          echo "ECR_URI=${ECR_URI}" >> "$GITHUB_ENV"
+
+          docker tag \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            "${ECR_URI}:${IMAGE_TAG}"
+
+          docker tag \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            "${ECR_URI}:latest"
+
+
+      # ==========================================================
+      # PUSH
+      # ==========================================================
+
+      - name: Push Versioned Image
+        run: |
+
+          docker push "${ECR_URI}:${IMAGE_TAG}"
+
+
+      - name: Push Latest Image
+        run: |
+
+          docker push "${ECR_URI}:latest"
+
+
+      # ==========================================================
+      # GET DIGEST
+      # ==========================================================
+
+      - name: Get ECR Image Digest
+        run: |
+
+          DIGEST=$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "IMAGE_DIGEST=${DIGEST}" >> "$GITHUB_ENV"
+
+          echo "ECR Digest:"
+          echo "${DIGEST}"
+
+
+      # ==========================================================
+      # COSIGN
+      # ==========================================================
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+
+      - name: Sign ECR Image
+        env:
+          COSIGN_YES: "true"
+
+        run: |
+
+          echo "=================================================="
+          echo "COSIGN SIGNING"
+          echo "=================================================="
+
+          cosign sign \
+            --yes \
+            "${ECR_URI}@${IMAGE_DIGEST}"
+
+
+      # ==========================================================
+      # VERIFY
+      # ==========================================================
+
+      - name: Verify Cosign Signature
+        run: |
+
+          echo "=================================================="
+          echo "COSIGN VERIFICATION"
+          echo "=================================================="
+
+          cosign verify \
+            "${ECR_URI}@${IMAGE_DIGEST}" \
+            --certificate-identity-regexp ".*" \
+            --certificate-oidc-issuer-regexp ".*"
+
+
+      # ==========================================================
+      # FINAL
+      # ==========================================================
+
+      - name: Final Summary
+        run: |
+
+          echo ""
+          echo "=================================================="
+          echo "SECURITY PIPELINE COMPLETED"
+          echo "=================================================="
+
+          echo "Repository : ${{ github.repository }}"
+          echo "Branch     : ${{ inputs.branch }}"
+          echo "Commit     : ${{ github.sha }}"
+
+          echo ""
+          echo "Snyk Code        : COMPLETED"
+          echo "Snyk Open Source : COMPLETED"
+          echo "Snyk Container   : COMPLETED"
+
+          echo ""
+          echo "ECR:"
+          echo "${ECR_URI}:${IMAGE_TAG}"
+
+          echo ""
+          echo "Digest:"
+          echo "${IMAGE_DIGEST}"
+
+          echo ""
+          echo "Cosign:"
+          echo "SIGNED"
+
+          echo ""
+          echo "=================================================="
