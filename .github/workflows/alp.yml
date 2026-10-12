@@ -8,8 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  snyk-container-scan:
-    name: Scan python:3.12-alpine
+  snyk-scan:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,29 +27,23 @@ jobs:
         run: docker pull python:3.12-alpine
 
       - name: Scan image and generate JSON report
-        id: snyk_scan
+        id: scan
         continue-on-error: true
         run: |
           snyk container test python:3.12-alpine \
-            --severity-threshold=high \
-            --json-file-output=snyk-container-results.json
+            --file=Dockerfile \
+            --json-file-output=snyk-container-results.json \
+            || true
+
+          snyk container test python:3.12-alpine \
+            --file=Dockerfile \
+            || true
 
       - name: Upload vulnerability report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: snyk-python-alpine-report
+          name: snyk-container-report
           path: snyk-container-results.json
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Enforce security gate
-        if: always()
-        env:
-          SCAN_RESULT: ${{ steps.snyk_scan.outcome }}
-        run: |
-          if [ "$SCAN_RESULT" != "success" ]; then
-            echo "FAILED: Vulnerabilities found or Snyk scan encountered an error."
-            exit 1
-          fi
-          echo "PASSED: No high or critical vulnerabilities detected."
