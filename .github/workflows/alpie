@@ -3,9 +3,6 @@ name: Snyk Container alpie Image Scan
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
