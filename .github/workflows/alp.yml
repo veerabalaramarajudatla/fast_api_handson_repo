@@ -1,0 +1,56 @@
+
+name: Snyk Python Alpine Image Scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-container-scan:
+    name: Scan python:3.12-alpine
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Snyk CLI
+        run: npm install --global snyk
+
+      - name: Authenticate with Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth "$SNYK_TOKEN"
+
+      - name: Pull Python Alpine image
+        run: docker pull python:3.12-alpine
+
+      - name: Scan image and generate JSON report
+        id: snyk_scan
+        continue-on-error: true
+        run: |
+          snyk container test python:3.12-alpine \
+            --severity-threshold=high \
+            --json-file-output=snyk-container-results.json
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-python-alpine-report
+          path: snyk-container-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce security gate
+        if: always()
+        env:
+          SCAN_RESULT: ${{ steps.snyk_scan.outcome }}
+        run: |
+          if [ "$SCAN_RESULT" != "success" ]; then
+            echo "FAILED: Vulnerabilities found or Snyk scan encountered an error."
+            exit 1
+          fi
+          echo "PASSED: No high or critical vulnerabilities detected."
