@@ -1,0 +1,61 @@
+
+name: Snyk Container alpie Image Scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-scan:
+    name: Scan Python Alpine Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        run: |
+          docker pull python:3.12-alpine
+          docker images python:3.12-alpine
+
+      - name: Install Snyk CLI
+        run: npm install --global snyk
+
+      - name: Authenticate with Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth "$SNYK_TOKEN"
+
+      - name: Scan Docker image
+        id: scan
+        continue-on-error: true
+        run: |
+          snyk container test python:3.12-alpine \
+            --severity-threshold=high \
+            --json-file-output=snyk-container-results.json
+
+      - name: Upload Snyk scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-container-scan-results
+          path: snyk-container-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce vulnerability gate
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "Snyk scan failed or vulnerabilities exceeded the configured threshold."
+            exit 1
+          fi
+          echo "Snyk scan passed."
