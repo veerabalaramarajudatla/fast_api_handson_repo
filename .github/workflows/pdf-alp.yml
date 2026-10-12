@@ -1,0 +1,198 @@
+
+name: Snyk Alpine Scan with PDF Report
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Snyk CLI
+        run: npm install --global snyk
+
+      - name: Authenticate with Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth "$SNYK_TOKEN"
+
+      - name: Pull Python Alpine Image
+        run: docker pull python:3.12-alpine
+
+      - name: Run Snyk Scan
+        id: scan
+        continue-on-error: true
+        run: |
+          snyk container test python:3.12-alpine \
+            --json-file-output=snyk-results.json \
+            --severity-threshold=high
+          
+          echo "Scan exit code: $?"
+
+      - name: Install PDF Dependencies
+        if: always()
+        run: pip install reportlab
+
+      - name: Generate PDF Report
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from reportlab.lib import colors
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+          from reportlab.lib.units import mm
+          from reportlab.platypus import (
+              SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+          )
+
+          os.makedirs("reports", exist_ok=True)
+
+          report_file = "reports/snyk-container-scan-report.pdf"
+          json_file = "snyk-results.json"
+
+          data = {}
+          if os.path.exists(json_file):
+              try:
+                  with open(json_file, encoding="utf-8") as f:
+                      data = json.load(f)
+              except (json.JSONDecodeError, OSError):
+                  data = {}
+
+          vulnerabilities = data.get("vulnerabilities", [])
+          issues = []
+          for v in vulnerabilities:
+              issues.append([
+                  str(v.get("id", "Unknown")),
+                  str(v.get("packageName", "Unknown")),
+                  str(v.get("version", "Unknown")),
+                  str(v.get("severity", "Unknown")).upper(),
+                  str(v.get("fixedIn", []) or "No fix listed"),
+              ])
+
+          styles = getSampleStyleSheet()
+          styles.add(ParagraphStyle(
+              name="ReportTitle", parent=styles["Title"],
+              fontSize=19, leading=23, textColor=colors.HexColor("#17365D")
+          ))
+          styles.add(ParagraphStyle(
+              name="SmallText", parent=styles["BodyText"],
+              fontSize=8, leading=10, wordWrap="CJK"
+          ))
+
+          doc = SimpleDocTemplate(
+              report_file, pagesize=A4,
+              rightMargin=15*mm, leftMargin=15*mm,
+              topMargin=15*mm, bottomMargin=15*mm
+          )
+
+          story = [
+              Paragraph("Snyk Container Vulnerability Scan Report",
+                        styles["ReportTitle"]),
+              Spacer(1, 5*mm),
+              Paragraph(
+                  f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+                  styles["Normal"]),
+              Spacer(1, 4*mm),
+          ]
+
+          summary = [
+              ["Image", "python:3.12-alpine"],
+              ["Platform", "linux/amd64"],
+              ["Target OS", "Alpine Linux v3.24 (from supplied scan details)"],
+              ["Issues in JSON report", str(len(issues))],
+              ["Scan report status",
+               "JSON report available" if os.path.exists(json_file)
+               else "JSON report unavailable; inspect workflow logs"],
+          ]
+
+          table = Table(summary, colWidths=[48*mm, 120*mm])
+          table.setStyle(TableStyle([
+              ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF0F8")),
+              ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+              ("VALIGN", (0, 0), (-1, -1), "TOP"),
+              ("PADDING", (0, 0), (-1, -1), 6),
+          ]))
+          story += [table, Spacer(1, 7*mm),
+                    Paragraph("Vulnerability Details", styles["Heading2"])]
+
+          if issues:
+              rows = [[
+                  "ID", "Package", "Version", "Severity", "Fixed in"
+              ]]
+              for issue in issues:
+                  rows.append([
+                      Paragraph(x.replace("&", "&amp;").replace("<", "&lt;"),
+                                styles["SmallText"])
+                      for x in issue
+                  ])
+
+              details = Table(
+                  rows, repeatRows=1,
+                  colWidths=[27*mm, 38*mm, 25*mm, 22*mm, 56*mm]
+              )
+              details.setStyle(TableStyle([
+                  ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E5F5")),
+                  ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                  ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                  ("PADDING", (0, 0), (-1, -1), 4),
+              ]))
+              story += [details]
+          else:
+              story.append(Paragraph(
+                  "No vulnerability details were available in the JSON report. "
+                  "Check the workflow logs and confirm the scan produced valid JSON.",
+                  styles["BodyText"]))
+
+          story += [
+              Spacer(1, 6*mm),
+              Paragraph("Recommended Next Steps", styles["Heading2"]),
+              Paragraph(
+                  "1. Review each vulnerability ID, package, severity and fixed version.<br/>"
+                  "2. Update the base image or affected package after verifying the fix.<br/>"
+                  "3. Rebuild and rescan the image.<br/>"
+                  "4. Review the full Snyk output before treating the image as secure.",
+                  styles["BodyText"]),
+          ]
+
+          doc.build(story)
+          print(f"PDF report generated: {report_file}")
+          PY
+
+      - name: Upload PDF Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-container-pdf-report
+          path: reports/snyk-container-scan-report.pdf
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Raw JSON Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-container-json-report
+          path: snyk-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce Security Gate
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "FAILED: Snyk found vulnerabilities or the scan encountered an error."
+            exit 1
+          fi
+          echo "PASSED: No vulnerabilities above the configured threshold."
